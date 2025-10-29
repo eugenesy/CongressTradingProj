@@ -19,7 +19,7 @@
 \end{frame}
 
 \begin{frame}
-    \frametitle{Project Objective \& Overview}
+    \frametitle{Project Objective & Overview}
     \begin{columns}
         \begin{column}{0.6\textwidth}
             \textbf{Objective:} To construct a clean, labeled dataset from raw congressional financial disclosures to enable analysis of trading behavior and performance.
@@ -28,7 +28,7 @@
             \textbf{Workflow:}
             \begin{enumerate}
                 \item Ingest raw transaction data.
-                \item Enrich data with market benchmarks (S\&P 500) and historical prices.
+                \item Enrich data with market benchmarks (S&P 500) and historical prices.
                 \item Engineer features, including various return metrics.
                 \item \textbf{Clean and standardize} the dataset to ensure quality.
                 \item \textbf{Construct a binary label} to classify trade performance.
@@ -37,7 +37,7 @@
         \begin{column}{0.4\textwidth}
             \textbf{Initial Data:}
 
-            \texttt{v5\_transactions.csv}
+            \texttt{v5_transactions.csv}
             \begin{itemize}
                 \item Rows: 35,365
                 \item Columns: 26
@@ -45,7 +45,7 @@
             \vspace{1em}
             \textbf{Final Data:}
 
-            \texttt{v9\_transactions.csv}
+            \texttt{v9_transactions.csv}
             \begin{itemize}
                 \item Rows: 32,416
                 \item Columns: 47
@@ -55,7 +55,7 @@
 \end{frame}
 
 \begin{frame}
-    \frametitle{Core Task 1.1: Data Cleaning - Structural \& Missing Data}
+    \frametitle{Core Task 1.1: Data Cleaning - Structural & Missing Data}
     A significant portion of the project involved cleaning inconsistent and missing data. A total of \textbf{2,949 rows} were removed during this process.
 
     \textbf{Key Cleaning Steps (Part 1):}
@@ -67,7 +67,7 @@
         \end{itemize}
         \item \textbf{Critical Missing Data Handling:}
         \begin{itemize}
-            \item Dropped rows where the critical \texttt{Label\_1M} was \texttt{NaN} (e.g., due to insufficient historical data).
+            \item Dropped rows where the critical \texttt{Label_1M} was \texttt{NaN} (e.g., due to insufficient historical data).
             \item Filled categorical NaNs in \texttt{Committees}, \texttt{Industry}, and \texttt{Sector} with `Unknown'.
         \end{itemize}
     \end{itemize}
@@ -85,7 +85,7 @@
             \item Removed 266 `Exchange' transactions, as they do not represent typical buy/sell signals.
         \end{itemize}
         \item \textbf{Party Affiliation Standardization:} Mapped abbreviations (D, R, I) to full names (Democrat, Republican, Independent).
-        \item \textbf{Trade Size Standardization:} Converted raw `Trade\_Size\_USD` values into standardized categorical ranges (e.g., '1 - 1000', '1001 - 15000').
+        \item \textbf{Trade Size Standardization:} Converted raw `Trade_Size_USD` values into standardized categorical ranges (e.g., '1 - 1000', '1001 - 15000').
         \item \textbf{Unique Transaction IDs:} Assigned a unique `ID` to each transaction for easier tracking and referencing.
     \end{itemize}
 \end{frame}
@@ -106,29 +106,25 @@
     \textbf{Final Missing Values (Post-Cleaning):}
     \begin{itemize}
         \item \texttt{Comments}: 31,660 (Retained as non-critical for core analysis)
-        \item \texttt{SPY\_6Months}, \texttt{Label\_6M}, \texttt{Excess\_Return\_6M}, \texttt{SPY\_Return\_6M}: \textasciitilde1,539 (Due to future date projections or data availability)
-        \item \texttt{SPY\_3Months}, \texttt{Label\_3M}, \texttt{Excess\_Return\_3M}, \texttt{SPY\_Return\_3M}: \textasciitilde748 (Similar reasons as 6-month data)
+        \item \texttt{SPY_6Months}, \texttt{Label_6M}, \texttt{Excess_Return_6M}, \texttt{SPY_Return_6M}: \textasciitilde1,539 (Due to future date projections or data availability)
+        \item \texttt{SPY_3Months}, \texttt{Label_3M}, \texttt{Excess_Return_3M}, \texttt{SPY_Return_3M}: \textasciitilde748 (Similar reasons as 6-month data)
     \end{itemize}
     \vspace{1em}
     \textit{The reduction in critical missing values ensures a robust dataset for modeling.}
 \end{frame}
 
 \begin{frame}
-    \frametitle{Visualizing Cleaning: Transaction \& Party Standardization}
+    \frametitle{Visualizing Cleaning: Transaction & Party Standardization}
     \begin{columns}
         \begin{column}{0.5\textwidth}
             \textbf{Transaction Consolidation}
 
-            % Comment out or provide correct path
-            % \includegraphics[width=\textwidth]{../data/comparison_results/trade_size_distribution.png}
-            [Image: Trade Size Distribution]
+            \includegraphics[width=\textwidth]{../data/comparison_results/trade_size_distribution.png}
         \end{column}
         \begin{column}{0.5\textwidth}
             \textbf{Party Affiliation Mapping}
 
-            % Comment out or provide correct path
-            % \includegraphics[width=\textwidth]{../data/comparison_results/party_distribution.png}
-            [Image: Party Distribution]
+            \includegraphics[width=\textwidth]{../data/comparison_results/party_distribution.png}
         \end{column}
     \end{columns}
 \end{frame}
@@ -150,8 +146,8 @@
     \textbf{Step 2: Define the Label Logic}
     \begin{itemize}
         \item We hypothesize a ``good'' trade outperforms the market by a significant margin, set here at \textbf{6\%}.
-        \item For a \textbf{Purchase}: Label = 1 if \(\text{Excess Return} > 0.06\)
-        \item For a \textbf{Sale}: Label = 1 if \(\text{Excess Return} \leq 0.06\)
+        \item For a \textbf{Purchase}: Label = 1 if \(\text{Excess Return} > 0.06
+        \item For a \textbf{Sale}: Label = 1 if \(\text{Excess Return} \leq 0.06
     \end{itemize}
 \end{frame}
 
@@ -165,9 +161,7 @@
                 \item It has long tails, indicating trades with significant outperformance or underperformance.
             \end{itemize}
 
-            % Comment out or provide correct path
-            % \includegraphics[width=\textwidth]{../data/comparison_results/excess_return_1m_distribution.png}
-            [Image: Excess Return Distribution]
+            \includegraphics[width=\textwidth]{../data/comparison_results/excess_return_1m_distribution.png}
         \end{column}
         \begin{column}{0.5\textwidth}
             \textbf{1-Month Label Distribution}
@@ -176,19 +170,17 @@
                 \item This is ideal for training an unbiased machine learning model.
             \end{itemize}
 
-            % Comment out or provide correct path
-            % \includegraphics[width=\textwidth]{../data/comparison_results/label_1m_distribution.png}
-            [Image: Label Distribution]
+            \includegraphics[width=\textwidth]{../data/comparison_results/label_1m_distribution.png}
         \end{column}
     \end{columns}
 \end{frame}
 
 \begin{frame}
-    \frametitle{Conclusion \& Next Steps}
+    \frametitle{Conclusion & Next Steps}
     \textbf{Accomplishments:}
     \begin{itemize}
         \item A robust, automated pipeline for processing and cleaning financial disclosure data has been established.
-        \item A clear, hypothesis-driven trading label (Label\_1M) has been engineered, resulting in a well-balanced dataset.
+        \item A clear, hypothesis-driven trading label (Label_1M) has been engineered, resulting in a well-balanced dataset.
         \item The final dataset is significantly enriched and standardized, making it suitable for advanced analysis.
     \end{itemize}
     \vspace{1em}
