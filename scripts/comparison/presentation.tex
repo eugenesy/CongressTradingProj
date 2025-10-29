@@ -1,0 +1,203 @@
+\documentclass[aspectratio=169]{beamer}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+
+\title{Congressional Trade Dataset Preparation}
+\subtitle{Methodology for Data Cleaning, Enrichment, and Labeling}
+\author{Eugene Sy}
+\institute{National Taiwan University}
+\date{\today}
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}
+    \frametitle{Project Objective \& Overview}
+    \begin{columns}
+        \begin{column}{0.6\textwidth}
+            \textbf{Objective:} To construct a clean, labeled dataset from raw congressional financial disclosures to enable analysis of trading behavior and performance.
+
+            \vspace{1em}
+            \textbf{Workflow:}
+            \begin{enumerate}
+                \item Ingest raw transaction data.
+                \item Enrich data with market benchmarks (S\&P 500) and historical prices.
+                \item Engineer features, including various return metrics.
+                \item \textbf{Clean and standardize} the dataset to ensure quality.
+                \item \textbf{Construct a binary label} to classify trade performance.
+            \end{enumerate}
+        \end{column}
+        \begin{column}{0.4\textwidth}
+            \textbf{Initial Data:}
+
+            \texttt{v5\_transactions.csv}
+            \begin{itemize}
+                \item Rows: 35,365
+                \item Columns: 26
+            \end{itemize}
+            \vspace{1em}
+            \textbf{Final Data:}
+
+            \texttt{v9\_transactions.csv}
+            \begin{itemize}
+                \item Rows: 32,416
+                \item Columns: 47
+            \end{itemize}
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Core Task 1.1: Data Cleaning - Structural \& Missing Data}
+    A significant portion of the project involved cleaning inconsistent and missing data. A total of \textbf{2,949 rows} were removed during this process.
+
+    \textbf{Key Cleaning Steps (Part 1):}
+    \begin{itemize}
+        \item \textbf{Duplicate Removal:} Checked for and removed 0 duplicate rows, ensuring unique transaction entries.
+        \item \textbf{Column Pruning:} Removed columns with high nullity or low analytical value:
+        \begin{itemize}
+            \item \texttt{Short} (35,314 NaNs), \texttt{Description} (32,785 NaNs), \texttt{Subholding} (14,042 NaNs), \texttt{District}.
+        \end{itemize}
+        \item \textbf{Critical Missing Data Handling:}
+        \begin{itemize}
+            \item Dropped rows where the critical \texttt{Label\_1M} was \texttt{NaN} (e.g., due to insufficient historical data).
+            \item Filled categorical NaNs in \texttt{Committees}, \texttt{Industry}, and \texttt{Sector} with `Unknown'.
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Core Task 1.2: Data Cleaning - Standardization}
+    Continuing the data cleaning process, focusing on standardizing categorical and structural features.
+
+    \textbf{Key Cleaning Steps (Part 2):}
+    \begin{itemize}
+        \item \textbf{Transaction Standardization:}
+        \begin{itemize}
+            \item Consolidated `Sale (Full)' and `Sale (Partial)' into a single `Sale' category.
+            \item Removed 266 `Exchange' transactions, as they do not represent typical buy/sell signals.
+        \end{itemize}
+        \item \textbf{Party Affiliation Standardization:} Mapped abbreviations (D, R, I) to full names (Democrat, Republican, Independent).
+        \item \textbf{Trade Size Standardization:} Converted raw `Trade\_Size\_USD` values into standardized categorical ranges (e.g., '1 - 1000', '1001 - 15000').
+        \item \textbf{Unique Transaction IDs:} Assigned a unique `ID` to each transaction for easier tracking and referencing.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Missing Value Analysis}
+    Understanding and addressing missing values was crucial for data quality.
+
+    \textbf{Initial Missing Values (Top 5):}
+    \begin{itemize}
+        \item \texttt{Short}: 35,314
+        \item \texttt{Comments}: 34,525
+        \item \texttt{Description}: 32,785
+        \item \texttt{Subholding}: 14,042
+        \item \texttt{District}: 8,227
+    \end{itemize}
+    \vspace{1em}
+    \textbf{Final Missing Values (Post-Cleaning):}
+    \begin{itemize}
+        \item \texttt{Comments}: 31,660 (Retained as non-critical for core analysis)
+        \item \texttt{SPY\_6Months}, \texttt{Label\_6M}, \texttt{Excess\_Return\_6M}, \texttt{SPY\_Return\_6M}: \textasciitilde1,539 (Due to future date projections or data availability)
+        \item \texttt{SPY\_3Months}, \texttt{Label\_3M}, \texttt{Excess\_Return\_3M}, \texttt{SPY\_Return\_3M}: \textasciitilde748 (Similar reasons as 6-month data)
+    \end{itemize}
+    \vspace{1em}
+    \textit{The reduction in critical missing values ensures a robust dataset for modeling.}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Visualizing Cleaning: Transaction \& Party Standardization}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \textbf{Transaction Consolidation}
+
+            % Comment out or provide correct path
+            % \includegraphics[width=\textwidth]{../data/comparison_results/trade_size_distribution.png}
+            [Image: Trade Size Distribution]
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \textbf{Party Affiliation Mapping}
+
+            % Comment out or provide correct path
+            % \includegraphics[width=\textwidth]{../data/comparison_results/party_distribution.png}
+            [Image: Party Distribution]
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Core Task 2: Building the Trading Label}
+    The primary goal is to create a binary label representing a ``successful'' trade. This requires defining success based on market outperformance.
+
+    \vspace{1em}
+    \textbf{Step 1: Calculate Excess Return}
+    \begin{itemize}
+        \item First, we calculate the stock's return and the benchmark (SPY) return over a given period (1, 3, 6 months).
+        \item Then, we define Excess Return as the difference:
+        \[
+        \text{Excess Return} = R_{\text{stock}} - R_{\text{SPY}}
+        \]
+    \end{itemize}
+    \vspace{1em}
+    \textbf{Step 2: Define the Label Logic}
+    \begin{itemize}
+        \item We hypothesize a ``good'' trade outperforms the market by a significant margin, set here at \textbf{6\%}.
+        \item For a \textbf{Purchase}: Label = 1 if \(\text{Excess Return} > 0.06\)
+        \item For a \textbf{Sale}: Label = 1 if \(\text{Excess Return} \leq 0.06\)
+    \end{itemize}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Visualizing the Results: Returns and Labels}
+    \begin{columns}
+        \begin{column}{0.5\textwidth}
+            \textbf{1-Month Excess Return Distribution}
+            \begin{itemize}
+                \item The distribution is centered near zero, which is expected.
+                \item It has long tails, indicating trades with significant outperformance or underperformance.
+            \end{itemize}
+
+            % Comment out or provide correct path
+            % \includegraphics[width=\textwidth]{../data/comparison_results/excess_return_1m_distribution.png}
+            [Image: Excess Return Distribution]
+        \end{column}
+        \begin{column}{0.5\textwidth}
+            \textbf{1-Month Label Distribution}
+            \begin{itemize}
+                \item The resulting labels are almost perfectly balanced.
+                \item This is ideal for training an unbiased machine learning model.
+            \end{itemize}
+
+            % Comment out or provide correct path
+            % \includegraphics[width=\textwidth]{../data/comparison_results/label_1m_distribution.png}
+            [Image: Label Distribution]
+        \end{column}
+    \end{columns}
+\end{frame}
+
+\begin{frame}
+    \frametitle{Conclusion \& Next Steps}
+    \textbf{Accomplishments:}
+    \begin{itemize}
+        \item A robust, automated pipeline for processing and cleaning financial disclosure data has been established.
+        \item A clear, hypothesis-driven trading label (Label\_1M) has been engineered, resulting in a well-balanced dataset.
+        \item The final dataset is significantly enriched and standardized, making it suitable for advanced analysis.
+    \end{itemize}
+    \vspace{1em}
+    \textbf{Next Steps:}
+    \begin{itemize}
+        \item Utilize this labeled dataset to train classification models (e.g., Logistic Regression, Gradient Boosting) to predict successful trades.
+        \item Explore feature importance to understand what factors (e.g., party, committee assignments, sector) are most predictive of trade performance.
+        \item Analyze the model's predictions to identify patterns in congressional trading.
+    \end{itemize}
+\end{frame}
+
+\end{document}

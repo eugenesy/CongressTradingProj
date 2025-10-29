@@ -1,0 +1,15 @@
+# Exclude generated data files
+data/*.pkl
+data/*.csv
+data/comparison_results/
+data/parquet_files/
+
+# Exclude Python bytecode
+__pycache__/
+*.pyc
+
+# Exclude specific reports
+failed_tickers_report.txt
+
+# Exclude embedding enhanced CSV (if it's a large generated file)
+data/transactions_with_embeddings_enhanced.csv
