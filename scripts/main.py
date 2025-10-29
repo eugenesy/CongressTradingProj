@@ -13,6 +13,7 @@ from scripts.data_processing.add_trading_labels import add_trading_labels
 from scripts.data_processing.clean_data import clean_transaction_data
 from scripts.data_processing.add_transaction_ids import add_transaction_ids_and_standardize
 from scripts.data_processing.embedding_enhanced import enhance_embeddings
+from scripts.data_exploration.explore_v9_data import explore_v9_data
 from scripts.comparison.compare_data import compare_data
 
 def main():
@@ -119,18 +120,28 @@ def main():
             output_csv=v9_transactions_csv
         )
 
-    # Step 9: Enhance embeddings
+    # Step 9: Data Exploration
+    exploration_results_dir = os.path.join(base_data_path, 'exploration_results/')
+    if os.path.exists(exploration_results_dir) and len(os.listdir(exploration_results_dir)) > 0:
+        print(f"Skipping Step 9: Data exploration results already exist in {exploration_results_dir}.")
+    else:
+        explore_v9_data(
+            input_csv=v9_transactions_csv,
+            output_dir=exploration_results_dir
+        )
+
+    # Step 10: Enhance embeddings
     if os.path.exists(transactions_with_embeddings_enhanced_csv):
-        print(f"Skipping Step 9: {transactions_with_embeddings_enhanced_csv} already exists.")
+        print(f"Skipping Step 10: {transactions_with_embeddings_enhanced_csv} already exists.")
     else:
         enhance_embeddings(
             input_csv=v9_transactions_csv,
             output_csv=transactions_with_embeddings_enhanced_csv
         )
 
-    # Step 10: Compare initial and final data
+    # Step 11: Compare initial and final data
     if os.path.exists(comparison_report_file):
-        print(f"Skipping Step 10: {comparison_report_file} already exists.")
+        print(f"Skipping Step 11: {comparison_report_file} already exists.")
     else:
         compare_data(
             initial_csv=v5_transactions_with_approp_ticker_csv,
