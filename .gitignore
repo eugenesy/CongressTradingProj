@@ -1,15 +1,79 @@
-# Exclude generated data files
-data/*.pkl
-data/*.csv
-data/comparison_results/
-data/parquet_files/
-
-# Exclude Python bytecode
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
 
-# Exclude specific reports
-failed_tickers_report.txt
+# Virtual environments
+venv/
+env/
+ENV/
 
-# Exclude embedding enhanced CSV (if it's a large generated file)
-data/transactions_with_embeddings_enhanced.csv
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Data files (large, should not be in git)
+# Ignore everything in data/ but keep the directory structure
+data/*
+!data/.gitkeep
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!data/parquet/.gitkeep
+!data/models/.gitkeep
+!data/results/.gitkeep
+
+# Checkpoints
+*.pkl
+
+# Model files
+*.joblib
+*.h5
+*.pt
+*.pth
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# CatBoost
+catboost_info/
+
+# Old structure
+baseline_models/
+
+# Temporary files
+*.tmp
+*.bak
+*~
+
+# Documentation artifacts
+RESTRUCTURING_SUMMARY.md
+PATH_UPDATES.md
+GEMINI.md
+workflow.md
+
+# Presentations (optional)
+presentations/
+*.tex
+*.pdf
+presentation_*.txt
+
+# Keep these important files
+!.gitignore
+!requirements.txt
+!README.md
