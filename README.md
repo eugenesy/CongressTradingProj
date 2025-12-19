@@ -17,11 +17,18 @@ This repository contains the implementation of a Temporal Graph Network (TGN) fo
 ## Quick Start
 
 ### 1. Data Preparation
-To build the temporal graph dataset:
+**Download Data**:
+Please request access and download the required datasets (`ml_dataset_reduced_attributes.csv`, `all_tickers_historical_data.pkl`) from this [Google Drive Link](https://drive.google.com/drive/folders/1ku1EeknWuz5h3PVxHtRhYs6Rd-GuHxfa?usp=share_link).
+
+**Setup**:
+Place the downloaded files into `data/raw/` inside the project directory.
+
+**Build Graph**:
+To build the temporal graph dataset from the raw files:
 ```bash
 python src/temporal_data.py
 ```
-This reads the source CSV (hardcoded in `src/temporal_data.py`) and generates `data/temporal_data.pt`.
+This reads the source CSV and generates `data/temporal_data.pt`.
 
 ### 2. Training (Development/Demo)
 To run a quick 1-year evaluation (Default: 2023):
