@@ -1,0 +1,23 @@
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
+
+# Data
+data/raw/
+*.csv
+*.pkl
+*.pt
+*.pth
+
+# Logs
+logs/
+ablation_study/logs/
+
+# Results
+results/
+
+# IDE
+.vscode/
+.idea/
+
