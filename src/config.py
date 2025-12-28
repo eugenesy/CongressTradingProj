@@ -15,7 +15,7 @@ RAW_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
 PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
 # Key Files
-TX_FILENAME = "ml_dataset_reduced_attributes.csv"
+TX_FILENAME = "ml_dataset_with_multiclass_labels.csv"
 TX_PATH = os.path.join(RAW_DATA_DIR, TX_FILENAME)
 
 PRICE_FILENAME = "all_tickers_historical_data.pkl"
