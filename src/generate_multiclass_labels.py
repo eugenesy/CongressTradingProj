@@ -16,7 +16,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # ================= CONFIGURATION =================
 PICKLE_PATH = 'data/raw/all_tickers_historical_data.pkl'
 CSV_PATH = 'data/raw/ml_dataset_reduced_attributes.csv'
-OUTPUT_PATH = 'data/processed/ml_dataset_with_multiclass_labels.csv'
+OUTPUT_PATH = 'data/raw/ml_dataset_with_multiclass_labels.csv'
 
 PERIODS = {
     '1W': {'weeks': 1},
@@ -97,6 +97,10 @@ def get_price_at_date(price_series, target_date):
 def get_categorical_label(value, thresholds):
     """
     Returns a string label based on which bin the value falls into.
+    Logic:
+    - If val < thresholds[0] -> "Below {thresholds[0]}"
+    - If thresholds[i] <= val < thresholds[i+1] -> "{low} to {high}"
+    - If val >= thresholds[-1] -> "{last}+"
     """
     if value < thresholds[0]:
         return f"Below {thresholds[0]*100:g}%"
@@ -126,13 +130,17 @@ def process_row_logic(row):
         results[f'performance_{k}'] = 0.0
         results[f'log_performance_{k}'] = 0.0
         results[f'CAGR_{k}'] = 0.0
-        results[f'{k}_Bin'] = "N/A" # Default for completely missing ticker data
+        
+        # Labels defaults
+        results[f'{k}_10bins'] = "N/A"
+        results[f'{k}_6bins'] = "N/A"
+        results[f'{k}_3bins'] = "N/A"
         
         if k in LABEL_THRESHOLDS:
             for t in LABEL_THRESHOLDS[k]:
                 t_str = f"minus{abs(t):g}" if t < 0 else f"{t:g}"
                 col_name = f"{k}_{t_str}PC"
-                results[col_name] = 0 # Default (will be overwritten to 0.5 if timeframe is undetermined)
+                results[col_name] = 0 # Default
 
     try:
         trade_date = pd.to_datetime(row['Traded'])
@@ -153,7 +161,6 @@ def process_row_logic(row):
         perf_col = f'performance_{period_name}'
         log_col = f'log_performance_{period_name}'
         cagr_col = f'CAGR_{period_name}'
-        bin_col = f'{period_name}_Bin'
         
         try:
             target_end_date = trade_date + relativedelta(**delta)
@@ -166,7 +173,10 @@ def process_row_logic(row):
                 results[perf_col] = 0.0
                 results[log_col] = 0.0
                 results[cagr_col] = 0.0
-                results[bin_col] = "Undetermined"
+                
+                results[f'{period_name}_10bins'] = "Undetermined"
+                results[f'{period_name}_6bins'] = "Undetermined"
+                results[f'{period_name}_3bins'] = "Undetermined"
                 
                 # Set all binary labels to 0.5
                 if period_name in LABEL_THRESHOLDS:
@@ -200,16 +210,28 @@ def process_row_logic(row):
             
             # === GENERATE LABELS ===
             if period_name in LABEL_THRESHOLDS:
+                # 1. 10 Bins (Symmetric: ~9 thresholds -> 10 bins)
+                full_thresh = [x/100.0 for x in LABEL_THRESHOLDS[period_name]]
+                results[f'{period_name}_10bins'] = get_categorical_label(abs_spread, full_thresh)
+                
+                # 2. 6 Bins (Combine 5 negs into 1 "Below 0%")
+                # Passing thresholds starting at 0 causes everything <0 to become "Below 0%"
+                base_thresh = [x/100.0 for x in _BASE_THRESHOLDS[period_name]]
+                results[f'{period_name}_6bins'] = get_categorical_label(abs_spread, base_thresh)
+                
+                # 3. 3 Bins (Negs -> "Below 0%", Low Pos -> "0 to X", High Pos -> "X+")
+                # Cutoff is the 3rd element in base (index 2). e.g., 4% for 1W.
+                # Thresholds: [0, Cutoff]. Bins: <0, 0-Cutoff, >Cutoff.
+                cutoff_pct = _BASE_THRESHOLDS[period_name][2]
+                three_bin_thresh = [0.0, cutoff_pct/100.0]
+                results[f'{period_name}_3bins'] = get_categorical_label(abs_spread, three_bin_thresh)
+                
+                # 4. Binary Columns (One-Hot style per threshold)
                 current_thresholds_pct = LABEL_THRESHOLDS[period_name]
                 decimal_thresholds = [x / 100.0 for x in current_thresholds_pct]
                 
-                # 1. Categorical String Label
-                results[bin_col] = get_categorical_label(abs_spread, decimal_thresholds)
-                
-                # 2. Binary Columns
                 for i, t_val in enumerate(current_thresholds_pct):
                     thresh_decimal = decimal_thresholds[i]
-                    
                     t_str = f"minus{abs(t_val):g}" if t_val < 0 else f"{t_val:g}"
                     col_name = f"{period_name}_{t_str}PC"
                     
@@ -243,6 +265,7 @@ def main():
         full_data = pickle.load(f)
     
     df = pd.read_csv(CSV_PATH)
+    
     total_rows = len(df)
     
     spy_key = next((k for k in ['SPY', '^GSPC', 'sp500'] if k in full_data), None)

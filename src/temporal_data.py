@@ -13,7 +13,7 @@ CONFIG = {
     # 1. Label Settings
     # We must define this here because we have to encode the strings into integers 
     # to store them in the tensor 'y'.
-    'LABEL_COL': '1M_Bin',       # Column to use as the target
+    'LABEL_COL': '1M_6Bin',       # Column to use as the target
     'LABEL_LOOKAHEAD_DAYS': 30,  # Defines the 'resolution_t' (when the label is revealed)
     
     # 2. Filtering

@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from src.models_tgn import TGN
+from src.models_tgn_binary_labels import TGN
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
 from sklearn.metrics import classification_report, average_precision_score
