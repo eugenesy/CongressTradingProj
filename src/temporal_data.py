@@ -4,38 +4,81 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import os
-import pickle
-
 from collections import defaultdict
 
+# ==========================================
+#              CONFIGURATION
+# ==========================================
+CONFIG = {
+    # 1. Label Settings
+    # We must define this here because we have to encode the strings into integers 
+    # to store them in the tensor 'y'.
+    'LABEL_COL': '1M_Bin',       # Column to use as the target
+    'LABEL_LOOKAHEAD_DAYS': 30,  # Defines the 'resolution_t' (when the label is revealed)
+    
+    # 2. Filtering
+    'MIN_TICKER_FREQ': 5,        # Minimum trades required to include a company node
+}
+# ==========================================
+
 class TemporalGraphBuilder:
-    def __init__(self, transactions_df, min_freq=5):
+    def __init__(self, transactions_df, config):
         """
-        Builds a TemporalData object from transactions.
+        Builds a TemporalData object from transactions based on config.
         """
-        self.transactions = transactions_df.sort_values('Traded').reset_index(drop=True)
-        self.min_freq = min_freq
+        self.config = config
+        self.transactions = transactions_df.copy()
+        
+        # Sort by time to ensure chronological processing
+        self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
+        self.transactions = self.transactions.sort_values('Traded').reset_index(drop=True)
+        
+        self.min_freq = self.config['MIN_TICKER_FREQ']
         
         # Mappings
         self.pol_id_map = {}
         self.company_id_map = {}
-        # Mappers for static features
         self.party_map = {'Unknown': 0}
         self.state_map = {'Unknown': 0}
-        
-        # History Tracking for "Realized Win Rate" Feature
-        # Key: BioGuideID -> List of (Resolution_Timestamp, Label)
-        self.pol_history = defaultdict(list)
+        self.label_map = {}  # Stores String -> Int mapping for categorical labels
         
         self._build_mappings()
+        self._prepare_label_mapping()
         
+    def _prepare_label_mapping(self):
+        """
+        Handles categorical labels (strings) by creating a mapping to integers.
+        """
+        label_col = self.config['LABEL_COL']
+        
+        # Check if the label column is numeric or categorical
+        if not np.issubdtype(self.transactions[label_col].dtype, np.number):
+            print(f"Detected categorical label: {label_col}. Building map...")
+            
+            # Explicit order for return bins (Worst -> Best)
+            known_order = [
+                "Below -16%", "-16% to -12%", "-12% to -8%", "-8% to -4%", "-4% to 0%",
+                "0% to 4%", "4% to 8%", "8% to 12%", "12% to 16%", "16%+"
+            ]
+            
+            unique_labels = self.transactions[label_col].dropna().unique()
+            
+            # Check if our known_order covers the data found
+            if set(unique_labels).issubset(set(known_order)):
+                self.label_map = {label: i for i, label in enumerate(known_order)}
+            else:
+                print("Warning: Unknown string categories. Using alphabetical sort.")
+                self.label_map = {label: i for i, label in enumerate(sorted(unique_labels))}
+            
+            print(f"Label Mapping Created: {self.label_map}")
+
     def _build_mappings(self):
         # 1. Politicians
         pols = self.transactions['BioGuideID'].unique()
         self.pol_id_map = {pid: i for i, pid in enumerate(pols)}
         print(f"Mapped {len(self.pol_id_map)} Politicians")
         
-        # 2. Companies (Filter rare tickers to reduce noise/memory)
+        # 2. Companies (Filter rare tickers)
         ticker_counts = self.transactions['Ticker'].value_counts()
         valid_tickers = ticker_counts[ticker_counts >= self.min_freq].index
         self.company_id_map = {t: i for i, t in enumerate(valid_tickers)}
@@ -52,7 +95,6 @@ class TemporalGraphBuilder:
             
     def _parse_amount(self, amt_str):
         if pd.isna(amt_str): return 0.0
-        # Simple cleanup
         clean = str(amt_str).replace('$','').replace(',','')
         try:
             return float(clean)
@@ -60,51 +102,36 @@ class TemporalGraphBuilder:
             return 0.0
 
     def process(self):
-        src = []
-        dst = []
-        t = []
-        msg = [] # Edge Features
-        y = []   # Labels
-        resolution_t = []  # When each trade's label becomes known (Trade + 30d)
+        src, dst, t, msg, y = [], [], [], [], []
+        resolution_t = []
         
-        # Static Features: [num_nodes, 2] -> (Party, State)
-        # Initialize with 0
+        # Static Features setup
         num_pols = len(self.pol_id_map)
         num_comps = len(self.company_id_map)
         total_nodes = num_pols + num_comps
-        
         x_static = torch.zeros((total_nodes, 2), dtype=torch.long)
         
-        # Pre-fill Static Features for Politicians
-        # (Companies remain 0,0)
+        # Pre-fill Static Features
         pol_meta = self.transactions.drop_duplicates('BioGuideID').set_index('BioGuideID')
-        
         for pid, idx in self.pol_id_map.items():
             if pid in pol_meta.index:
                 row = pol_meta.loc[pid]
-                if isinstance(row, pd.DataFrame): row = row.iloc[0] # Handle duplicates
+                if isinstance(row, pd.DataFrame): row = row.iloc[0]
                 
-                party = row.get('Party', 'Unknown')
-                state = row.get('State', 'Unknown')
-                
-                p_code = self.party_map.get(party, 0)
-                s_code = self.state_map.get(state, 0)
-                
+                p_code = self.party_map.get(row.get('Party', 'Unknown'), 0)
+                s_code = self.state_map.get(row.get('State', 'Unknown'), 0)
                 x_static[idx] = torch.tensor([p_code, s_code])
 
-        
-        # Base Timestamp (for normalization)
+        # Base Timestamp
         if len(self.transactions) > 0:
-            base_time = pd.to_datetime(self.transactions['Traded'].min()).timestamp()
+            base_time = self.transactions['Traded_DT'].min().timestamp()
         else:
             base_time = 0
             
         skipped = 0
-        
-        # Use datetime objects for Gap calculation
-        self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
         self.transactions['Filed_DT'] = pd.to_datetime(self.transactions['Filed'])
         
+        # Load Price Sequences
         if os.path.exists("data/price_sequences.pt"):
             print("Loading Price Sequences...")
             price_map = torch.load("data/price_sequences.pt")
@@ -112,12 +139,16 @@ class TemporalGraphBuilder:
             print("Warning: data/price_sequences.pt not found. Using zero sequences.")
             price_map = {}
             
-        price_seqs = [] # New feature list
+        price_seqs = []
 
+        # MAIN LOOP
+        label_col = self.config['LABEL_COL']
+        lookahead_days = self.config['LABEL_LOOKAHEAD_DAYS']
+        
         for _, row in tqdm(self.transactions.iterrows(), total=len(self.transactions), desc="Building Temporal Events"):
             pid = row['BioGuideID']
             ticker = row['Ticker']
-            tid = row.get('transaction_id', -1) # Ensure we access ID
+            tid = row.get('transaction_id', -1)
             
             if pid not in self.pol_id_map or ticker not in self.company_id_map:
                 skipped += 1
@@ -129,90 +160,89 @@ class TemporalGraphBuilder:
             src.append(p_idx)
             dst.append(c_idx)
             
-            # Time (Seconds since start)
-            if pd.isna(row['Traded_DT']):
-                continue
+            # Time
+            if pd.isna(row['Traded_DT']): continue
             ts = row['Traded_DT'].timestamp() - base_time
             t.append(int(ts))
             
-            # --- Edge Features ---
-            # 1. Amount
-            amt = self._parse_amount(row['Trade_Size_USD'])
-            amt = np.log1p(amt)
-            
-            # 2. Buy/Sell
+            # Features
+            amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
             is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
             
-            # 3. Filing Gap (Days)
             if pd.notnull(row['Filed_DT']):
-                gap_days = (row['Filed_DT'] - row['Traded_DT']).days
-                gap_days = max(0, gap_days)
+                gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days)
             else:
                 gap_days = 30
             gap_feat = np.log1p(gap_days)
-            
-            # Edge features: [Amount, Is_Buy, Filing_Gap]
-            # Label will be added DYNAMICALLY during training (with temporal masking)
             msg.append([amt, is_buy, gap_feat])
             
-            # --- Price Features (Engineered) ---
-            # Get 14-dim feature vector (7 Stock + 7 SPY features)
-            # Default to zeros if missing
+            # Price Feature
             if tid in price_map:
-                p_feat = price_map[tid] # Tensor (14,)
+                p_feat = price_map[tid]
             else:
                 p_feat = torch.zeros((14,), dtype=torch.float32)
             price_seqs.append(p_feat)
             
-            # Label
-            lbl = row.get('Label_1M', 0.0)
-            if pd.isna(lbl): lbl = 0.0
-            y.append(lbl)
+            # --- LABEL HANDLING ---
+            raw_lbl = row.get(label_col, None)
             
-            # Resolution Time (when this trade's label becomes "known")
-            # Label_1M = 1-month forward return, so resolution = Trade + 30 days
-            resolution_ts = (row['Traded_DT'] + pd.Timedelta(days=30)).timestamp() - base_time
+            if self.label_map:
+                # If categorical, map string -> int
+                if raw_lbl in self.label_map:
+                    y.append(float(self.label_map[raw_lbl]))
+                else:
+                    y.append(-1.0) # Unknown class
+            else:
+                # If numeric, keep as float
+                val = float(raw_lbl) if (pd.notnull(raw_lbl) and raw_lbl != '') else 0.0
+                y.append(val)
+            
+            # Resolution Time (Masking Logic)
+            # This is intrinsic to the label: if we predict 1M returns, 
+            # we MUST mask for 30 days regardless of when we run the training.
+            resolution_ts = (row['Traded_DT'] + pd.Timedelta(days=lookahead_days)).timestamp() - base_time
             resolution_t.append(int(resolution_ts))
             
-        print(f"Skipped {skipped} transactions due to rare tickers/missing IDs.")
+        print(f"Skipped {skipped} transactions.")
         
         data = TemporalData(
             src=torch.tensor(src, dtype=torch.long),
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
             msg=torch.tensor(msg, dtype=torch.float),
-            y=torch.tensor(y, dtype=torch.float)
+            y=torch.tensor(y, dtype=torch.long if self.label_map else torch.float)
         )
         
-        # Add price features (engineered)
         if price_seqs:
-            data.price_seq = torch.stack(price_seqs) # (Num_Events, 14)
+            data.price_seq = torch.stack(price_seqs)
         else:
-            # Fallback for empty (shouldn't happen if skip logic holds)
             data.price_seq = torch.zeros((len(src), 14))
         
-        # Add resolution_t as separate attribute (for dynamic label masking)
         data.resolution_t = torch.tensor(resolution_t, dtype=torch.long)
-        
-        # Meta info
         data.num_nodes = total_nodes
         data.x_static = x_static
         data.num_parties = len(self.party_map)
         data.num_states = len(self.state_map)
         
+        # Save map for decoding later
+        if self.label_map:
+            data.label_map = self.label_map
+        
         return data
 
 if __name__ == "__main__":
-    # Test
-    # from src.config import TX_PATH # Need to ensure src is in path or relative import
-    # Hack for script execution
     import sys
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
     from src.config import TX_PATH
     
     df = pd.read_csv(TX_PATH)
-    builder = TemporalGraphBuilder(df)
+    
+    builder = TemporalGraphBuilder(df, CONFIG)
     data = builder.process()
+    
     print(data)
+    if hasattr(data, 'label_map'):
+        print(f"Classes: {len(data.label_map)}")
+        
     os.makedirs("data", exist_ok=True)
     torch.save(data, "data/temporal_data.pt")
