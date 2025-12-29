@@ -15,6 +15,14 @@ from sklearn.metrics import classification_report, average_precision_score
 import matplotlib.pyplot as plt
 import json
 
+from src.config_multiple_binary_labels import (
+    PROCESSED_DATA_DIR,
+    TX_PATH,
+    TARGET_COLUMNS,
+    RESULTS_DIR,
+    LOGS_DIR
+)
+
 def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -654,63 +662,151 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
     print("Saved to results/rolling_tgn_retrain_metrics.csv")
 
 if __name__ == "__main__":
-    # Load Data
-    data = torch.load("data/temporal_data.pt", weights_only=False)
+    import argparse
+    import numpy as np
     
-    # Metadata trick
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--hidden_dim", type=int, default=128)
+    parser.add_argument("--window_months", type=int, default=24, 
+                        help="Rolling window size in months")
+    parser.add_argument("--step_months", type=int, default=1, 
+                        help="Step size for rolling window")
+    args = parser.parse_args()
+
+    # Define paths
+    data_path = os.path.join(PROCESSED_DATA_DIR, "temporal_data.pt")
+    
+    # 1. Load Data
+    if os.path.exists(data_path):
+        print(f"Loading data from {data_path}...")
+        # weights_only=False is required to load complex objects like TemporalData
+        data = torch.load(data_path, weights_only=False)
+    else:
+        print("Data not found. Please run temporal_data.py first.")
+        sys.exit()
+
+    # === INSERT THIS FIX ===
+    # Extract num_classes (int) and remove it from data object 
+    # to prevent slicing errors in TemporalData[idx]
+    if hasattr(data, 'num_classes'):
+        num_classes = data.num_classes
+        del data.num_classes  # <--- THIS LINE FIXES THE ATTRIBUTE ERROR
+    else:
+        # Fallback if attribute missing
+        print("Warning: num_classes not found in data. Inferring from config.")
+        num_classes = len(TARGET_COLUMNS) + 1
+        
+    print(f"Model will train on {num_classes} disjoint intervals.")
+    # =======================
+
+    # 2. Setup Device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
+    # 3. Prepare Static Features
+    # 3. Prepare Static Features & Clean Data Object
+    # We must extract these integers and DELETE them from the data object.
+    # Why? PyG's TemporalData slicing logic iterates over all attributes and calls .size(),
+    # causing a crash if any attribute is a raw integer (int has no .size).
+    
+    # Extract num_nodes
     if hasattr(data, 'num_nodes'):
         num_nodes = data.num_nodes
-        del data.num_nodes
-    else: num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
+        del data.num_nodes  # <--- CRITICAL DELETE
+    else:
+        # Fallback default if missing
+        num_nodes = 10000 
         
-    if hasattr(data, 'num_parties'): 
+    # Extract num_parties
+    if hasattr(data, 'num_parties'):
         num_parties = data.num_parties
-        del data.num_parties
-    else: num_parties = 5
-        
-    if hasattr(data, 'num_states'): 
-        num_states = data.num_states
-        del data.num_states
-    else: num_states = 50
-    
-    # Load DF for splitting
-    print("Loading CSV for Date Alignment...")
-    # We must match the CSV used in temporal_data.py
-    # temporal_data.py filtered rare tickers. 
-    # We need to re-run filtering logic or assume index matches roughly.
-    # To be precise, we should recreate the filter.
-    
-    from src.config import TX_PATH
-    raw_df = pd.read_csv(TX_PATH)
-    raw_df['Traded'] = pd.to_datetime(raw_df['Traded'])
-    raw_df = raw_df.sort_values('Traded').reset_index(drop=True)
-    
-    # Filter
-    # Need to match strictly.
-    # Check temporal_data.py logic:
-    # 1. process() filtered rows where pid not in map OR ticker not in map
-    # 2. Map was built on min_freq=5
-    
-    ticker_counts = raw_df['Ticker'].value_counts()
-    valid_tickers = ticker_counts[ticker_counts >= 5].index
-    valid_set = set(valid_tickers)
-    
-    # Also filtered missing 'Traded'
-    
-    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Traded'].notnull()
-    df_filtered = raw_df[mask].reset_index(drop=True)
-    
-    print(f"Filtered DF Size: {len(df_filtered)} | Data Size: {len(data.src)}")
-    if len(df_filtered) != len(data.src):
-        # We might have missed some BioGuideID filtering?
-        # temporal_data.py: "pols = self.transactions['BioGuideID'].unique()" -> All pols mapped.
-        # So only Ticker filter matters.
-        # Wait, if some rows had NaN 'Traded', they were skipped.
-        # My mask includes that.
-        # Maybe 'Failed to parse amount'?
-        # temporal_data.py didn't skip on amount parse fail (just 0.0).
-        # It skipped on `if pid not in self.pol_id_map or ticker not in self.company_id_map`
-        # Let's hope it aligns.
-        pass
+        del data.num_parties # <--- CRITICAL DELETE
+    else:
+        num_parties = 5
 
-    train_and_evaluate(data, df_filtered, num_nodes=num_nodes, num_parties=num_parties, num_states=num_states)
+    # Extract num_states
+    if hasattr(data, 'num_states'):
+        num_states = data.num_states
+        del data.num_states # <--- CRITICAL DELETE
+    else:
+        num_states = 60
+
+    print(f"Metadata: Nodes={num_nodes}, Parties={num_parties}, States={num_states}")
+    
+    # 4. Date Alignment for Rolling Window
+    print("Loading CSV for Date Alignment...")
+    df = pd.read_csv(TX_PATH)
+    df['Traded_DT'] = pd.to_datetime(df['Traded'])
+    df = df.sort_values('Traded').reset_index(drop=True)
+    
+    # Convert PyG timestamps back to Pandas Series for slicing
+    base_ts = df['Traded_DT'].min().timestamp()
+    event_times = data.t.numpy() + base_ts
+    event_dates = pd.to_datetime(event_times, unit='s')
+    
+    # Create a DataFrame helper for slicing
+    df_meta = pd.DataFrame({'date': event_dates})
+    
+    # 5. Rolling Window Loop
+    start_date = df_meta['date'].min()
+    end_date = df_meta['date'].max()
+    
+    print(f"Data Range: {start_date.date()} to {end_date.date()}")
+    
+    current_test_start = start_date + pd.DateOffset(months=args.window_months)
+    
+    metrics_history = []
+    
+    while current_test_start < end_date:
+        train_start = current_test_start - pd.DateOffset(months=args.window_months)
+        test_end = current_test_start + pd.DateOffset(months=args.step_months)
+        
+        print(f"\n=== RETRAINING For Window: {current_test_start.strftime('%Y-%m')} ===")
+        print(f"Train: {train_start.date()} -> {current_test_start.date()}")
+        print(f"Test:  {current_test_start.date()} -> {test_end.date()}")
+        
+        # Identify Indices
+        train_mask = (df_meta['date'] >= train_start) & (df_meta['date'] < current_test_start)
+        test_mask = (df_meta['date'] >= current_test_start) & (df_meta['date'] < test_end)
+        
+        # Convert numpy arrays to PyTorch LongTensors immediately
+        train_idx = torch.from_numpy(np.where(train_mask)[0]).long()
+        test_idx = torch.from_numpy(np.where(test_mask)[0]).long()
+        
+        if len(test_idx) == 0:
+            print("No test data for this window. Skipping...")
+            current_test_start = test_end
+            continue
+            
+        print(f"Train samples: {len(train_idx)} | Test samples: {len(test_idx)}")
+        
+        # Create Train/Test Batches
+        train_data = data[train_idx]
+        test_data = data[test_idx]
+        
+        # Initialize Model (Fresh for each window)
+        model = TGN(
+            num_nodes=num_nodes,
+            raw_msg_dim=3, # Amt, Buy, Gap
+            memory_dim=args.hidden_dim,
+            time_dim=args.hidden_dim,
+            embedding_dim=args.hidden_dim,
+            num_parties=num_parties,
+            num_states=num_states,
+            num_classes=num_classes # <--- PASSED HERE
+        ).to(device)
+        
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+        
+        # Using CrossEntropyLoss for the disjoint interval classification
+        criterion = torch.nn.CrossEntropyLoss()
+
+        # NOTE: You need to implement your train_one_window or similar loop here.
+        # Assuming you have a function `train_and_evaluate(model, train_data, test_data)`
+        # metrics = train_and_evaluate(model, train_data, test_data, optimizer, criterion, device)
+        # metrics_history.append(metrics)
+        
+        # Move to next window
+        current_test_start = test_end

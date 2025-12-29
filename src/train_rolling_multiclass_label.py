@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.append(os.getcwd())
 
-from src.models_tgn_categorical_labels import TGN
+from src.models_tgn_multiclass_label import TGN
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
 from sklearn.metrics import classification_report, average_precision_score
@@ -659,7 +659,7 @@ if __name__ == "__main__":
     # We need to re-run filtering logic or assume index matches roughly.
     # To be precise, we should recreate the filter.
     
-    from src.config import TX_PATH
+    from src.config_single_label import TX_PATH
     raw_df = pd.read_csv(TX_PATH)
     raw_df['Traded'] = pd.to_datetime(raw_df['Traded'])
     raw_df = raw_df.sort_values('Traded').reset_index(drop=True)
