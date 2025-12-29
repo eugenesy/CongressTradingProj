@@ -14,6 +14,9 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 RAW_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
 PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 
+#Logging Directory
+LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
+
 # Key Files
 TX_FILENAME = "ml_dataset_with_multiclass_labels.csv"
 TX_PATH = os.path.join(RAW_DATA_DIR, TX_FILENAME)
