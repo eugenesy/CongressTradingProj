@@ -192,4 +192,3 @@ class TGN(torch.nn.Module):
         
     def get_price_embedding(self, price_seq):
         return self.price_encoder(price_seq)
-

@@ -4,20 +4,31 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import os
+import sys
 from collections import defaultdict
+
+# ==========================================
+#              IMPORTS & SETUP
+# ==========================================
+# Add parent directory to path to allow imports from src
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.config import (
+    TX_PATH, 
+    LABEL_COL, 
+    LABEL_LOOKAHEAD_DAYS, 
+    MIN_TICKER_FREQ
+)
 
 # ==========================================
 #              CONFIGURATION
 # ==========================================
+# We reconstruct the dictionary here so the class structure 
+# (which relies on self.config['KEY']) remains unchanged.
 CONFIG = {
-    # 1. Label Settings
-    # We must define this here because we have to encode the strings into integers 
-    # to store them in the tensor 'y'.
-    'LABEL_COL': '1M_6Bin',       # Column to use as the target
-    'LABEL_LOOKAHEAD_DAYS': 30,  # Defines the 'resolution_t' (when the label is revealed)
-    
-    # 2. Filtering
-    'MIN_TICKER_FREQ': 5,        # Minimum trades required to include a company node
+    'LABEL_COL': LABEL_COL,
+    'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
+    'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
 }
 # ==========================================
 
@@ -231,10 +242,7 @@ class TemporalGraphBuilder:
         return data
 
 if __name__ == "__main__":
-    import sys
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-    from src.config import TX_PATH
-    
+    # Note: sys.path is already updated at the top of the file
     df = pd.read_csv(TX_PATH)
     
     builder = TemporalGraphBuilder(df, CONFIG)

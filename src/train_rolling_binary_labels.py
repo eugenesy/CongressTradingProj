@@ -229,7 +229,15 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     # 'price_emb' is 1 per trade.
                     # Pass it as both src/dst context (symmetric context for the edge).
                     pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(pred_pos.squeeze(), batch.y)
+
+                    # --- FIX: Mask invalid (-1) targets ---
+                    valid_mask = batch.y != -1
+                    if valid_mask.sum() > 0:
+                        loss = criterion(pred_pos.squeeze()[valid_mask], batch.y[valid_mask].float())
+                    else:
+                        loss = torch.tensor(0.0, requires_grad=True).to(device)
+                    # --------------------------------------
+
                     loss.backward()
                     optimizer.step()
                     
@@ -278,11 +286,17 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 # Compute Train F1 for this epoch
                 train_f1 = 0.0
-                if len(epoch_targets) > 0:
-                    train_f1 = f1_score(epoch_targets, np.array(epoch_preds) > 0.5)
+                # --- FIX: Filter -1s before metrics ---
+                targets_np = np.array(epoch_targets)
+                preds_np = np.array(epoch_preds)
+                valid_idx = targets_np != -1
+
+                if valid_idx.sum() > 0:
+                    train_f1 = f1_score(targets_np[valid_idx], preds_np[valid_idx] > 0.5)
                     epoch_train_f1s.append(train_f1)
                 else:
                     epoch_train_f1s.append(0.0)
+                # --------------------------------------
                 
                 # C. VALIDATION EVAL (No Backprop)
                 model.eval()
@@ -348,8 +362,16 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 # Calculate validation F1
                 val_f1 = 0.0
-                if len(val_targets) > 0 and len(set(val_targets)) > 1:
-                    val_f1 = f1_score(val_targets, np.array(val_preds) > 0.5)
+                val_targets_np = np.array(val_targets)
+                val_preds_np = np.array(val_preds)
+                valid_val_idx = val_targets_np != -1
+
+                if valid_val_idx.sum() > 0:
+                    # Check if we have both classes (0 and 1) remaining to avoid sklearn warning
+                    unique_labels = np.unique(val_targets_np[valid_val_idx])
+                    if len(unique_labels) > 1 or (len(unique_labels) == 1 and unique_labels[0] in [0, 1]):
+                        val_f1 = f1_score(val_targets_np[valid_val_idx], val_preds_np[valid_val_idx] > 0.5)
+
                 epoch_val_f1s.append(val_f1)
                 
                 print(f"  Epoch {epoch}/{max_epochs}: Loss={avg_loss:.4f} | Train F1={train_f1:.4f} | Val F1={val_f1:.4f}")
@@ -447,7 +469,15 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     s_dst = model.encode_static(data.x_static[dst])
                     
                     pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(pred_pos.squeeze(), batch.y)
+
+                    # --- FIX: Mask invalid (-1) targets ---
+                    valid_mask = batch.y != -1
+                    if valid_mask.sum() > 0:
+                        loss = criterion(pred_pos.squeeze()[valid_mask], batch.y[valid_mask].float())
+                    else:
+                        loss = torch.tensor(0.0, requires_grad=True).to(device)
+                    # --------------------------------------
+
                     loss.backward()
                     optimizer.step()
                     
@@ -545,14 +575,26 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 # Update memory for next batch *within* the month
                 model.memory.update_state(src, dst, t, augmented_msg)
                 neighbor_loader.insert(src, dst)
-            
+
             # Metrics
             try:
-                auc = roc_auc_score(targets, preds)
-                pr_auc = average_precision_score(targets, preds)  # PR-AUC (better for imbalanced)
-                acc = accuracy_score(targets, np.array(preds) > 0.5)
-                f1 = f1_score(targets, np.array(preds) > 0.5)
-                macro_f1 = f1_score(targets, np.array(preds) > 0.5, average='macro')
+                # --- FIX: Filter -1s before metrics ---
+                targets_np = np.array(targets)
+                preds_np = np.array(preds)
+                valid_test_idx = targets_np != -1
+                
+                clean_targets = targets_np[valid_test_idx]
+                clean_preds = preds_np[valid_test_idx]
+                
+                if len(clean_targets) > 0:
+                    auc = roc_auc_score(clean_targets, clean_preds)
+                    pr_auc = average_precision_score(clean_targets, clean_preds)
+                    acc = accuracy_score(clean_targets, clean_preds > 0.5)
+                    f1 = f1_score(clean_targets, clean_preds > 0.5)
+                    macro_f1 = f1_score(clean_targets, clean_preds > 0.5, average='macro')
+                else:
+                    auc, pr_auc, acc, f1, macro_f1 = 0, 0, 0, 0, 0
+                # --------------------------------------
                 count = len(preds) # Define count here
                 
                 # Save Results to CSV

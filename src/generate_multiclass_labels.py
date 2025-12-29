@@ -178,12 +178,12 @@ def process_row_logic(row):
                 results[f'{period_name}_6bins'] = "Undetermined"
                 results[f'{period_name}_3bins'] = "Undetermined"
                 
-                # Set all binary labels to 0.5
+                # CHANGED: Set all binary labels to -1.0 (Invalid/Missing)
                 if period_name in LABEL_THRESHOLDS:
                     for t_val in LABEL_THRESHOLDS[period_name]:
                         t_str = f"minus{abs(t_val):g}" if t_val < 0 else f"{t_val:g}"
                         col_name = f"{period_name}_{t_str}PC"
-                        results[col_name] = 0.5
+                        results[col_name] = -1.0 # <--- MODIFIED HERE
                 continue
 
             # === Calculations (If Data Exists) ===
@@ -215,13 +215,10 @@ def process_row_logic(row):
                 results[f'{period_name}_10bins'] = get_categorical_label(abs_spread, full_thresh)
                 
                 # 2. 6 Bins (Combine 5 negs into 1 "Below 0%")
-                # Passing thresholds starting at 0 causes everything <0 to become "Below 0%"
                 base_thresh = [x/100.0 for x in _BASE_THRESHOLDS[period_name]]
                 results[f'{period_name}_6bins'] = get_categorical_label(abs_spread, base_thresh)
                 
                 # 3. 3 Bins (Negs -> "Below 0%", Low Pos -> "0 to X", High Pos -> "X+")
-                # Cutoff is the 3rd element in base (index 2). e.g., 4% for 1W.
-                # Thresholds: [0, Cutoff]. Bins: <0, 0-Cutoff, >Cutoff.
                 cutoff_pct = _BASE_THRESHOLDS[period_name][2]
                 three_bin_thresh = [0.0, cutoff_pct/100.0]
                 results[f'{period_name}_3bins'] = get_categorical_label(abs_spread, three_bin_thresh)

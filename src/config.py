@@ -30,3 +30,18 @@ VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
 os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
+
+# ==========================================
+#         MODEL & LABEL CONFIGURATION
+# ==========================================
+
+# 1. Label Settings
+# Column to use as the target
+LABEL_COL = '1W_0PC'
+
+# Defines the 'resolution_t' (when the label is revealed)
+LABEL_LOOKAHEAD_DAYS = 7  
+
+# 2. Filtering
+# Minimum trades required to include a company node
+MIN_TICKER_FREQ = 5

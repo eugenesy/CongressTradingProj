@@ -567,18 +567,24 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             
             # Metrics
             try:
-                # FIX: Removed ROC_AUC and PR_AUC because they require probability matrices
-                # and are complex to format for 11 classes.
-                
                 acc = accuracy_score(targets, preds)
-                f1 = f1_score(targets, preds, average='weighted') # Weighted for class imbalance
+                f1 = f1_score(targets, preds, average='weighted') 
                 macro_f1 = f1_score(targets, preds, average='macro')
                 count = len(preds)
                 
-                # Save Results to CSV
+                # 1. Append to local list (Fixes the empty CSV at the end)
+                results.append({
+                    "Year": year,
+                    "Month": month,
+                    "ACC": acc,
+                    "F1": f1,
+                    "Macro_F1": macro_f1,
+                    "Count": count
+                })
+
+                # 2. Append to file immediately (Safety backup)
                 os.makedirs("results", exist_ok=True)
                 with open('results/rolling_tgn_retrain_metrics.csv', 'a') as f:
-                    # Write header if file is empty
                     if f.tell() == 0:
                         f.write("Year,Month,ACC,F1,Macro_F1,Count\n")
                     f.write(f"{year},{month},{acc:.4f},{f1:.4f},{macro_f1:.4f},{count}\n")
@@ -587,7 +593,6 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 # Classification Report
                 print(f"\n--- Classification Report for {year}-{month:02d} ---")
-                # Removed 'target_names' argument to let it auto-generate class IDs 0-10
                 print(classification_report(targets, preds, zero_division=0))
                 
                 # Save Learning Curve
