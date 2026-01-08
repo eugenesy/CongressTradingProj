@@ -18,6 +18,7 @@ PICKLE_PATH = 'data/raw/all_tickers_historical_data.pkl'
 CSV_PATH = 'data/raw/ml_dataset_reduced_attributes.csv'
 OUTPUT_PATH = 'data/raw/ml_dataset_with_multiclass_labels.csv'
 
+# Updated PERIODS: 1Y renamed to 12M, new months added
 PERIODS = {
     '1W': {'weeks': 1},
     '2W': {'weeks': 2},
@@ -25,20 +26,41 @@ PERIODS = {
     '2M': {'months': 2},
     '3M': {'months': 3},
     '6M': {'months': 6},
+    '7M': {'months': 7},
     '8M': {'months': 8},
-    '1Y': {'years': 1}
+    '9M': {'months': 9},
+    '10M': {'months': 10},
+    '11M': {'months': 11},
+    '12M': {'months': 12}, # Renamed from 1Y
+    '14M': {'months': 14},
+    '16M': {'months': 16},
+    '18M': {'months': 18},
+    '20M': {'months': 20},
+    '22M': {'months': 22},
+    '24M': {'months': 24}
 }
 
 # Base POSITIVE thresholds
+# Logic extrapolation: Roughly (3 + Month_Count) based on your original 1M-1Y curve
 _BASE_THRESHOLDS = {
-    '1W': [0, 2, 4, 6, 8],
-    '2W': [0, 2.5, 5, 7.5, 10],
-    '1M': [0, 4, 8, 12, 16],
-    '2M': [0, 5, 10, 15, 20],
-    '3M': [0, 6, 12, 18, 24],
-    '6M': [0, 9, 18, 27, 36],
-    '8M': [0, 11, 22, 33, 44],
-    '1Y': [0, 15, 30, 45, 60]
+    '1W':  [0, 2, 4, 6, 8],
+    '2W':  [0, 2.5, 5, 7.5, 10],
+    '1M':  [0, 4, 8, 12, 16],
+    '2M':  [0, 5, 10, 15, 20],
+    '3M':  [0, 6, 12, 18, 24],
+    '6M':  [0, 9, 18, 27, 36],
+    '7M':  [0, 10, 20, 30, 40],   # New
+    '8M':  [0, 11, 22, 33, 44],
+    '9M':  [0, 12, 24, 36, 48],   # New
+    '10M': [0, 13, 26, 39, 52],   # New
+    '11M': [0, 14, 28, 42, 56],   # New
+    '12M': [0, 15, 30, 45, 60],   # Renamed from 1Y
+    '14M': [0, 17, 34, 51, 68],   # New (3+14)
+    '16M': [0, 19, 38, 57, 76],   # New (3+16)
+    '18M': [0, 21, 42, 63, 84],   # New (3+18)
+    '20M': [0, 23, 46, 69, 92],   # New (3+20)
+    '22M': [0, 25, 50, 75, 100],  # New (3+22)
+    '24M': [0, 27, 54, 81, 108]   # New (3+24)
 }
 
 # Generate Full Symmetric Thresholds (e.g., -8, -6, -4, -2, 0, 2, 4, 6, 8)
@@ -97,10 +119,6 @@ def get_price_at_date(price_series, target_date):
 def get_categorical_label(value, thresholds):
     """
     Returns a string label based on which bin the value falls into.
-    Logic:
-    - If val < thresholds[0] -> "Below {thresholds[0]}"
-    - If thresholds[i] <= val < thresholds[i+1] -> "{low} to {high}"
-    - If val >= thresholds[-1] -> "{last}+"
     """
     if value < thresholds[0]:
         return f"Below {thresholds[0]*100:g}%"
@@ -178,12 +196,11 @@ def process_row_logic(row):
                 results[f'{period_name}_6bins'] = "Undetermined"
                 results[f'{period_name}_3bins'] = "Undetermined"
                 
-                # CHANGED: Set all binary labels to -1.0 (Invalid/Missing)
                 if period_name in LABEL_THRESHOLDS:
                     for t_val in LABEL_THRESHOLDS[period_name]:
                         t_str = f"minus{abs(t_val):g}" if t_val < 0 else f"{t_val:g}"
                         col_name = f"{period_name}_{t_str}PC"
-                        results[col_name] = -1.0 # <--- MODIFIED HERE
+                        results[col_name] = -1.0
                 continue
 
             # === Calculations (If Data Exists) ===
@@ -334,7 +351,15 @@ def main():
     print(f"{'Period':<10} | {'Count':<8} | {'Mean Log Return':<18} | {'T-Statistic':<12} | {'P-Value':<12}")
     print("-" * 60)
 
-    for period_name in PERIODS:
+    # Sort periods for display
+    def period_sort_key(k):
+        if 'W' in k: return int(k.replace('W','')) * 0.25
+        if 'M' in k: return int(k.replace('M',''))
+        return 999
+
+    sorted_periods = sorted(PERIODS.keys(), key=period_sort_key)
+
+    for period_name in sorted_periods:
         col_name = f'log_performance_{period_name}'
         
         if col_name in final_df.columns:
