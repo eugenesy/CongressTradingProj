@@ -16,7 +16,8 @@ from src.config_multiple_binary_labels import (
     TX_PATH, 
     TARGET_COLUMNS,
     LABEL_LOOKAHEAD_DAYS, 
-    MIN_TICKER_FREQ
+    MIN_TICKER_FREQ,
+    INCLUDE_IDEOLOGY  # Imported Flag
 )
 
 # ==========================================
@@ -29,6 +30,7 @@ CONFIG = {
     'TARGET_COLUMNS': TARGET_COLUMNS,
     'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
     'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
+    'INCLUDE_IDEOLOGY': INCLUDE_IDEOLOGY,
 }
 
 class IdeologyLookup:
@@ -138,11 +140,16 @@ class TemporalGraphBuilder:
         self._build_mappings()
         
         # Initialize Ideology Helper
-        print("Initializing Ideology Lookup...")
-        self.ideology_lookup = IdeologyLookup(
-            self.config['IDEOLOGY_PATH'], 
-            self.config['MEMBERS_PATH']
-        )
+        # Only load if config says enabled
+        if self.config.get('INCLUDE_IDEOLOGY', True):
+            print("Initializing Ideology Lookup...")
+            self.ideology_lookup = IdeologyLookup(
+                self.config['IDEOLOGY_PATH'], 
+                self.config['MEMBERS_PATH']
+            )
+        else:
+            print("Skipping Ideology Lookup (Disabled in Config).")
+            self.ideology_lookup = None
         
     def _build_mappings(self):
         # 1. Politicians
@@ -173,8 +180,6 @@ class TemporalGraphBuilder:
         except:
             return 0.0
         
-    # Inside TemporalGraphBuilder class
-
     def _get_dynamic_features(self, row, ideology_scores):
         """
         Central place to define dynamic edge features.
@@ -204,8 +209,10 @@ class TemporalGraphBuilder:
 
         # 4. Ideology (External Lookup)
         # ideology_scores is passed in because it depends on the loop's timestamp
-        feats.extend(ideology_scores) 
-        names.extend(["ideology_eco", "ideology_soc"])
+        # Only add if scores are provided (non-empty list)
+        if ideology_scores:
+            feats.extend(ideology_scores) 
+            names.extend(["ideology_eco", "ideology_soc"])
 
         # --- ADD NEW FEATURES HERE IN THE FUTURE ---
         # e.g., feats.append(row['New_Metric']); names.append('new_metric')
@@ -258,6 +265,7 @@ class TemporalGraphBuilder:
             raise ValueError(f"Missing target columns in CSV: {missing_cols}")
 
         lookahead_days = self.config['LABEL_LOOKAHEAD_DAYS']
+        include_ideology = self.config.get('INCLUDE_IDEOLOGY', True)
         
         for _, row in tqdm(self.transactions.iterrows(), total=len(self.transactions), desc="Building Temporal Events"):
             pid = row['BioGuideID']
@@ -281,22 +289,13 @@ class TemporalGraphBuilder:
             t.append(int(t_norm))
             
             # --- FEATURE CONSTRUCTION (MSG) ---
-            # 1. Transaction Features
-            amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
-            is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
+            # 2. Dynamic Ideology Features (Conditional)
+            ideology_scores = []
+            if include_ideology and self.ideology_lookup:
+                # Look up the score valid at the time of trade
+                ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
             
-            if pd.notnull(row['Filed_DT']):
-                gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days)
-            else:
-                gap_days = 30
-            gap_feat = np.log1p(gap_days)
-            
-            # 2. Dynamic Ideology Features
-            # Look up the score valid at the time of trade
-            ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
-            
-            # Combine into Message Vector: [Amount, IsBuy, Gap, Coord1D, Coord2D]
-            # dynamic feature extraction
+            # Combine into Message Vector: [Amount, IsBuy, Gap, (Optional: Coord1D, Coord2D)]
             msg_vector, feature_names = self._get_dynamic_features(row, ideology_scores)
             msg.append(msg_vector)
             
@@ -325,7 +324,7 @@ class TemporalGraphBuilder:
             src=torch.tensor(src, dtype=torch.long),
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
-            msg=torch.tensor(msg, dtype=torch.float), # Now 5 dims
+            msg=torch.tensor(msg, dtype=torch.float), # Now variable dims (3 or 5)
             y=torch.tensor(y, dtype=torch.long)
         )
 
@@ -353,7 +352,7 @@ if __name__ == "__main__":
     data = builder.process()
     
     print(data)
-    print(f"Msg Dimension: {data.msg.shape[1]}") # Should be 5
+    print(f"Msg Dimension: {data.msg.shape[1]}") # Should be 3 (if False) or 5 (if True)
     print(f"Task: Classification with {data.num_classes} intervals.")
         
     os.makedirs("data", exist_ok=True)

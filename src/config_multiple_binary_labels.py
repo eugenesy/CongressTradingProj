@@ -100,6 +100,9 @@ LABEL_LOOKAHEAD_DAYS = LOOKAHEAD_MAP.get(LABEL_TIMEFRAME, 30)
 # 3. Filtering
 MIN_TICKER_FREQ = 5
 
+# 4. Feature Flags
+INCLUDE_IDEOLOGY = True  # Set to False to exclude ideology scores from the model
+
 # Outputs
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results", LABEL_TIMEFRAME)
 LOGS_DIR = os.path.join(PROJECT_ROOT, "logs", LABEL_TIMEFRAME)
