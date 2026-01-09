@@ -180,9 +180,32 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                 num_states=num_states,
                 num_classes=num_classes 
             ).to(device)
+
+            # --- DYNAMIC CLASS WEIGHTING ---
+            # 1. Calculate class counts in the current training set
+            # Extract valid labels (ignore -100)
+            y_train = train_data.y.long()
+            y_train = y_train[y_train >= 0]
             
+            # Count occurrences of each class (0, 1, 2, 3...)
+            # We assume num_classes is correct (e.g., 4)
+            class_counts = torch.bincount(y_train, minlength=num_classes).float()
+            
+            # 2. Compute Weights: Inverse frequency
+            # Add small epsilon to avoid division by zero
+            weights = 1.0 / (class_counts + 1.0)
+            
+            # 3. Normalize weights so they sum to num_classes (keeps learning rate stable)
+            weights = weights * (num_classes / weights.sum())
+            
+            print(f"  Class Counts: {class_counts.tolist()} -> Weights: {weights.tolist()}")
+            
+            # 4. Pass to Loss Function
+            criterion = torch.nn.CrossEntropyLoss(weight=weights.to(device))
+            
+            # ... proceed to define optimizer ...
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-            criterion = torch.nn.CrossEntropyLoss()
+
             neighbor_loader = LastNeighborLoader(num_nodes, size=10, device=device)
             
             # 3. PHASE 1: TRAIN WITH VALIDATION
@@ -234,6 +257,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                     logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
                     loss = criterion(logits, batch.y.long())
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                     
                     epoch_loss += loss.item()
