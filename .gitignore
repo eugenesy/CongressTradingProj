@@ -17,6 +17,10 @@ ablation_study/logs/
 # Results
 results/
 
+# Source configuration
+src/config_multiple_binary_labels.py
+src/config_single_label.py
+
 # IDE
 .vscode/
 .idea/
