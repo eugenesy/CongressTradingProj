@@ -17,13 +17,16 @@ TX_PATH = os.path.join(RAW_DATA_DIR, TX_FILENAME)
 PRICE_FILENAME = "all_tickers_historical_data.pkl"
 PRICE_PATH = os.path.join(RAW_DATA_DIR, PRICE_FILENAME)
 
+COMMITTEE_FILENAME = "committee_assignments.csv"
+COMMITTEE_PATH = os.path.join(RAW_DATA_DIR, COMMITTEE_FILENAME)
+
 # ==========================================
 #         MODEL & LABEL CONFIGURATION
 # ==========================================
 
 # 1. Label Selection
 
-TARGET_YEARS = [2019, 2020, 2021, 2022, 2023]
+TARGET_YEARS = [2022, 2023]
 # Pick one: '1W', '2W', '1M', '2M', '3M', '4M', '5M', '6M', '7M', '8M', 
 # '9M', '10M', '11M', '12M', '14M', '16M', 18M', '20M', '22M', '24M'
 LABEL_TIMEFRAME = '12M'
@@ -101,7 +104,9 @@ LABEL_LOOKAHEAD_DAYS = LOOKAHEAD_MAP.get(LABEL_TIMEFRAME, 30)
 MIN_TICKER_FREQ = 5
 
 # 4. Feature Flags
-INCLUDE_IDEOLOGY = True  # Set to False to exclude ideology scores from the model
+INCLUDE_IDEOLOGY = True      # Set to False to exclude ideology scores
+INCLUDE_DISTRICT_ECON = True # Set to False to exclude district economic data
+INCLUDE_COMMITTEES = True
 
 # Outputs
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results", LABEL_TIMEFRAME)

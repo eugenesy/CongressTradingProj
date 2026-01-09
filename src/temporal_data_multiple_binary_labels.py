@@ -17,8 +17,16 @@ from src.config_multiple_binary_labels import (
     TARGET_COLUMNS,
     LABEL_LOOKAHEAD_DAYS, 
     MIN_TICKER_FREQ,
-    INCLUDE_IDEOLOGY  # Imported Flag
+    INCLUDE_IDEOLOGY,
+    INCLUDE_DISTRICT_ECON,
+    RAW_DATA_DIR,
+    COMMITTEE_PATH,
+    INCLUDE_COMMITTEES 
 )
+
+# Import the scripts to handle specific data lookups
+from src.district_economic_data import DistrictEconomicLookup
+from src.committee_data import CommitteeLookup
 
 # ==========================================
 #              CONFIGURATION
@@ -26,11 +34,15 @@ from src.config_multiple_binary_labels import (
 CONFIG = {
     'TX_PATH': TX_PATH,
     'IDEOLOGY_PATH': 'data/raw/ideology_scores_quarterly.csv',
-    'MEMBERS_PATH': 'data/raw/HSall_members.csv', # Needed for ID mapping
+    'MEMBERS_PATH': 'data/raw/HSall_members.csv',
+    'RAW_DATA_DIR': RAW_DATA_DIR,
+    'COMMITTEE_PATH': COMMITTEE_PATH, # <--- NEW
     'TARGET_COLUMNS': TARGET_COLUMNS,
     'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
     'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
     'INCLUDE_IDEOLOGY': INCLUDE_IDEOLOGY,
+    'INCLUDE_DISTRICT_ECON': INCLUDE_DISTRICT_ECON,
+    'INCLUDE_COMMITTEES': INCLUDE_COMMITTEES # <--- NEW
 }
 
 class IdeologyLookup:
@@ -47,76 +59,48 @@ class IdeologyLookup:
         self._load_scores()
         
     def _load_mapping(self):
-        """Creates BioGuideID -> ICPSR mapping from Voteview members file."""
         if not os.path.exists(self.members_path):
-            print(f"Warning: Members file not found at {self.members_path}. Ideology linking may fail.")
+            print(f"Warning: Members file not found at {self.members_path}")
             return
 
         df = pd.read_csv(self.members_path)
-        # Filter to relevant columns and drop duplicates
         if 'bioguide_id' in df.columns and 'icpsr' in df.columns:
             subset = df[['bioguide_id', 'icpsr']].dropna().drop_duplicates()
             self.bioguide_to_icpsr = dict(zip(subset['bioguide_id'], subset['icpsr']))
         print(f"Loaded ID mapping for {len(self.bioguide_to_icpsr)} politicians.")
 
     def _load_scores(self):
-        """Loads temporal ideology scores into sorted lists."""
         if not os.path.exists(self.ideology_path):
             print(f"Warning: Ideology file not found at {self.ideology_path}")
             return
 
         df = pd.read_csv(self.ideology_path)
         df['date_dt'] = pd.to_datetime(df['date_window_end'])
-        
-        # Sort by date ensures our lists are monotonic
         df = df.sort_values('date_dt')
         
         count = 0
         for _, row in df.iterrows():
             icpsr = int(row['icpsr'])
             ts = row['date_dt'].timestamp()
-            
-            # Feature Vector: [coord1D, coord2D]
-            # We can extend this to include delta from previous, errors, etc.
-            # New Code:
             c1 = row.get('coord1D', 0.0)
             c2 = row.get('coord2D', 0.0)
             feats = [
                 float(c1) if pd.notnull(c1) else 0.0,
                 float(c2) if pd.notnull(c2) else 0.0
             ]
-            
-            if icpsr not in self.history:
-                self.history[icpsr] = []
-            
+            if icpsr not in self.history: self.history[icpsr] = []
             self.history[icpsr].append((ts, feats))
             count += 1
-            
         print(f"Loaded {count} ideology score records.")
 
     def get_score_at_time(self, bioguide_id, timestamp):
-        """
-        Returns the most recent ideology [coord1D, coord2D] before `timestamp`.
-        Returns [0.0, 0.0] if no history found.
-        """
         icpsr = self.bioguide_to_icpsr.get(bioguide_id)
         if icpsr is None or icpsr not in self.history:
-            return [0.0, 0.0] # Default neutral
+            return [0.0, 0.0]
         
         records = self.history[icpsr]
-        
-        # bisect_right finds the insertion point to maintain order.
-        # We search using (timestamp, [inf]) to ensure we find the right spot
-        # comparison logic: it compares the first element of tuple (the timestamp).
         idx = bisect.bisect_right(records, (timestamp, []))
-        
-        if idx == 0:
-            # Timestamp is before the first recorded score. 
-            # Strategy: Return the first available score (backfill) OR neutral.
-            # Let's return the first available to avoid zeros if they have data shortly after.
-            return records[0][1]
-        
-        # Return the record immediately preceding the insertion point
+        if idx == 0: return records[0][1]
         return records[idx - 1][1]
 
 
@@ -125,13 +109,10 @@ class TemporalGraphBuilder:
         self.config = config
         self.transactions = transactions_df.copy()
         
-        # Sort by time
         self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
         self.transactions = self.transactions.sort_values('Traded').reset_index(drop=True)
-        
         self.min_freq = self.config['MIN_TICKER_FREQ']
         
-        # Mappings
         self.pol_id_map = {}
         self.company_id_map = {}
         self.party_map = {'Unknown': 0}
@@ -139,31 +120,41 @@ class TemporalGraphBuilder:
         
         self._build_mappings()
         
-        # Initialize Ideology Helper
-        # Only load if config says enabled
+        # 1. Ideology Lookup
         if self.config.get('INCLUDE_IDEOLOGY', True):
             print("Initializing Ideology Lookup...")
-            self.ideology_lookup = IdeologyLookup(
-                self.config['IDEOLOGY_PATH'], 
-                self.config['MEMBERS_PATH']
+            self.ideology_lookup = IdeologyLookup(self.config['IDEOLOGY_PATH'], self.config['MEMBERS_PATH'])
+        else:
+            self.ideology_lookup = None
+            
+        # 2. District Economic Lookup (New)
+        if self.config.get('INCLUDE_DISTRICT_ECON', True):
+            print("Initializing District Economic Data Lookup...")
+            self.dist_econ_lookup = DistrictEconomicLookup(
+                raw_data_dir=self.config['RAW_DATA_DIR'],
+                members_path=self.config['MEMBERS_PATH']
             )
         else:
-            print("Skipping Ideology Lookup (Disabled in Config).")
-            self.ideology_lookup = None
+            self.dist_econ_lookup = None
+
+        # 3. Committee Lookup (NEW)
+        if self.config.get('INCLUDE_COMMITTEES', True):
+            print("Initializing Committee Data Lookup...")
+            self.committee_lookup = CommitteeLookup(
+                committee_csv_path=self.config['COMMITTEE_PATH'],
+                members_csv_path=self.config['MEMBERS_PATH']
+            )
+        else:
+            self.committee_lookup = None
         
     def _build_mappings(self):
-        # 1. Politicians
         pols = self.transactions['BioGuideID'].unique()
         self.pol_id_map = {pid: i for i, pid in enumerate(pols)}
-        print(f"Mapped {len(self.pol_id_map)} Politicians")
         
-        # 2. Companies (Filter rare tickers)
         ticker_counts = self.transactions['Ticker'].value_counts()
         valid_tickers = ticker_counts[ticker_counts >= self.min_freq].index
         self.company_id_map = {t: i for i, t in enumerate(valid_tickers)}
-        print(f"Mapped {len(self.company_id_map)} Companies (min_freq={self.min_freq})")
-
-        # 3. Static Mappers
+        
         parties = self.transactions['Party'].fillna('Unknown').unique()
         for p in parties:
             if p not in self.party_map: self.party_map[p] = len(self.party_map)
@@ -175,20 +166,14 @@ class TemporalGraphBuilder:
     def _parse_amount(self, amt_str):
         if pd.isna(amt_str): return 0.0
         clean = str(amt_str).replace('$','').replace(',','')
-        try:
-            return float(clean)
-        except:
-            return 0.0
+        try: return float(clean)
+        except: return 0.0
         
-    def _get_dynamic_features(self, row, ideology_scores):
-        """
-        Central place to define dynamic edge features.
-        Returns: List[float] and List[str] (feature names)
-        """
+    def _get_dynamic_features(self, row, ideology_scores, district_vector, committee_vector, committee_names):
         feats = []
         names = []
 
-        # 1. Trade Amount (Log)
+        # 1. Trade Amount
         amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
         feats.append(amt)
         names.append("log_amount")
@@ -198,7 +183,7 @@ class TemporalGraphBuilder:
         feats.append(is_buy)
         names.append("is_buy")
 
-        # 3. Reporting Gap
+        # 3. Gap
         if pd.notnull(row['Filed_DT']):
             gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days)
         else:
@@ -207,15 +192,23 @@ class TemporalGraphBuilder:
         feats.append(gap_feat)
         names.append("log_gap_days")
 
-        # 4. Ideology (External Lookup)
-        # ideology_scores is passed in because it depends on the loop's timestamp
-        # Only add if scores are provided (non-empty list)
+        # 4. Ideology
         if ideology_scores:
             feats.extend(ideology_scores) 
             names.extend(["ideology_eco", "ideology_soc"])
+            
+        # 5. District Economics (New)
+        if district_vector is not None:
+            feats.extend(district_vector.tolist())
+            names.extend([f"econ_feat_{i}" for i in range(len(district_vector))])
 
-        # --- ADD NEW FEATURES HERE IN THE FUTURE ---
-        # e.g., feats.append(row['New_Metric']); names.append('new_metric')
+        # 6. Committee Membership (NEW)
+        if committee_vector is not None:
+            feats.extend(committee_vector.tolist())
+            if committee_names:
+                names.extend(committee_names)
+            else:
+                names.extend([f"comm_feat_{i}" for i in range(len(committee_vector))])
 
         return feats, names
 
@@ -223,13 +216,11 @@ class TemporalGraphBuilder:
         src, dst, t, msg, y = [], [], [], [], []
         resolution_t = []
         
-        # Static Features setup
         num_pols = len(self.pol_id_map)
         num_comps = len(self.company_id_map)
         total_nodes = num_pols + num_comps
         x_static = torch.zeros((total_nodes, 2), dtype=torch.long)
         
-        # Pre-fill Static Features
         pol_meta = self.transactions.drop_duplicates('BioGuideID').set_index('BioGuideID')
         for pid, idx in self.pol_id_map.items():
             if pid in pol_meta.index:
@@ -239,7 +230,6 @@ class TemporalGraphBuilder:
                 s_code = self.state_map.get(row.get('State', 'Unknown'), 0)
                 x_static[idx] = torch.tensor([p_code, s_code])
 
-        # Base Timestamp
         if len(self.transactions) > 0:
             base_time = self.transactions['Traded_DT'].min().timestamp()
         else:
@@ -248,7 +238,6 @@ class TemporalGraphBuilder:
         skipped = 0
         self.transactions['Filed_DT'] = pd.to_datetime(self.transactions['Filed'])
         
-        # Load Price Sequences
         if os.path.exists("data/price_sequences.pt"):
             print("Loading Price Sequences...")
             price_map = torch.load("data/price_sequences.pt")
@@ -258,15 +247,14 @@ class TemporalGraphBuilder:
             
         price_seqs = []
         target_cols = self.config['TARGET_COLUMNS']
-        
-        # Verify columns exist
-        missing_cols = [c for c in target_cols if c not in self.transactions.columns]
-        if missing_cols:
-            raise ValueError(f"Missing target columns in CSV: {missing_cols}")
-
         lookahead_days = self.config['LABEL_LOOKAHEAD_DAYS']
         include_ideology = self.config.get('INCLUDE_IDEOLOGY', True)
+        include_econ = self.config.get('INCLUDE_DISTRICT_ECON', True)
         
+        # Pre-check columns
+        missing = [c for c in target_cols if c not in self.transactions.columns]
+        if missing: raise ValueError(f"Missing columns: {missing}")
+
         for _, row in tqdm(self.transactions.iterrows(), total=len(self.transactions), desc="Building Temporal Events"):
             pid = row['BioGuideID']
             ticker = row['Ticker']
@@ -282,60 +270,65 @@ class TemporalGraphBuilder:
             src.append(p_idx)
             dst.append(c_idx)
             
-            # Time
             if pd.isna(row['Traded_DT']): continue
             ts = row['Traded_DT'].timestamp()
             t_norm = ts - base_time
             t.append(int(t_norm))
             
-            # --- FEATURE CONSTRUCTION (MSG) ---
-            # 2. Dynamic Ideology Features (Conditional)
+            # --- CONTEXT LOOKUPS ---
+            # Ideology
             ideology_scores = []
             if include_ideology and self.ideology_lookup:
-                # Look up the score valid at the time of trade
                 ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
+                
+            # District Economics
+            dist_vec = None
+            if include_econ and self.dist_econ_lookup:
+                dist_vec = self.dist_econ_lookup.get_district_vector(pid, ts)
+
+            # Committees (NEW)
+            comm_vec = None
+            comm_names = []
+            if self.committee_lookup:
+                comm_vec = self.committee_lookup.get_committee_vector(pid, ts)
+                comm_names = self.committee_lookup.get_feature_names()
             
-            # Combine into Message Vector: [Amount, IsBuy, Gap, (Optional: Coord1D, Coord2D)]
-            msg_vector, feature_names = self._get_dynamic_features(row, ideology_scores)
+            # Construct Msg
+            msg_vector, feature_names = self._get_dynamic_features(row, ideology_scores, dist_vec, comm_vec, comm_names)
             msg.append(msg_vector)
             
-            # Price Feature
-            if tid in price_map:
-                p_feat = price_map[tid]
-            else:
-                p_feat = torch.zeros((14,), dtype=torch.float32)
+            # Price
+            if tid in price_map: p_feat = price_map[tid]
+            else: p_feat = torch.zeros((14,), dtype=torch.float32)
             price_seqs.append(p_feat)
             
-            # --- LABEL HANDLING ---
+            # Label
             flags = row[target_cols].infer_objects(copy=False).fillna(0.0).values.astype(int)
             label_idx = int(np.sum(flags))
             y.append(label_idx)
             
-            # Resolution Time
+            # Resolution
             resolution_ts = (row['Traded_DT'] + pd.Timedelta(days=lookahead_days)).timestamp() - base_time
             resolution_t.append(int(resolution_ts))
             
         print(f"Skipped {skipped} transactions.")
         
-        # Calculate Number of Classes
         num_classes = len(target_cols) + 1
         
         data = TemporalData(
             src=torch.tensor(src, dtype=torch.long),
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
-            msg=torch.tensor(msg, dtype=torch.float), # Now variable dims (3 or 5)
+            msg=torch.tensor(msg, dtype=torch.float), 
             y=torch.tensor(y, dtype=torch.long)
         )
 
-        data.msg_feature_names = feature_names  # Save names for debugging
-        data.msg_dim = len(feature_names)       # Save explicit dimension
-        data.price_dim = 14                     # Save explicit price dimension
+        data.msg_feature_names = feature_names 
+        data.msg_dim = len(feature_names)       
+        data.price_dim = 14                     
         
-        if price_seqs:
-            data.price_seq = torch.stack(price_seqs)
-        else:
-            data.price_seq = torch.zeros((len(src), 14))
+        if price_seqs: data.price_seq = torch.stack(price_seqs)
+        else: data.price_seq = torch.zeros((len(src), 14))
         
         data.resolution_t = torch.tensor(resolution_t, dtype=torch.long)
         data.num_nodes = total_nodes
@@ -352,7 +345,7 @@ if __name__ == "__main__":
     data = builder.process()
     
     print(data)
-    print(f"Msg Dimension: {data.msg.shape[1]}") # Should be 3 (if False) or 5 (if True)
+    print(f"Msg Dimension: {data.msg.shape[1]}") 
     print(f"Task: Classification with {data.num_classes} intervals.")
         
     os.makedirs("data", exist_ok=True)
