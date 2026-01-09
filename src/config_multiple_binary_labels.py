@@ -20,13 +20,19 @@ PRICE_PATH = os.path.join(RAW_DATA_DIR, PRICE_FILENAME)
 COMMITTEE_FILENAME = "committee_assignments.csv"
 COMMITTEE_PATH = os.path.join(RAW_DATA_DIR, COMMITTEE_FILENAME)
 
+SIC_FILENAME = "company_sic_data.csv"
+SIC_PATH = os.path.join(RAW_DATA_DIR, SIC_FILENAME)
+
+FINANCIALS_FILENAME = "sec_quarterly_financials.csv"
+FINANCIALS_PATH = os.path.join(RAW_DATA_DIR, FINANCIALS_FILENAME)
+
 # ==========================================
 #         MODEL & LABEL CONFIGURATION
 # ==========================================
 
 # 1. Label Selection
 
-TARGET_YEARS = [2022, 2023]
+TARGET_YEARS = [2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
 # Pick one: '1W', '2W', '1M', '2M', '3M', '4M', '5M', '6M', '7M', '8M', 
 # '9M', '10M', '11M', '12M', '14M', '16M', 18M', '20M', '22M', '24M'
 LABEL_TIMEFRAME = '12M'
@@ -107,6 +113,8 @@ MIN_TICKER_FREQ = 5
 INCLUDE_IDEOLOGY = True      # Set to False to exclude ideology scores
 INCLUDE_DISTRICT_ECON = True # Set to False to exclude district economic data
 INCLUDE_COMMITTEES = True
+INCLUDE_COMPANY_SIC = True
+INCLUDE_COMPANY_FINANCIALS = True
 
 # Outputs
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results", LABEL_TIMEFRAME)

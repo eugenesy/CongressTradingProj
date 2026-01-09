@@ -21,12 +21,17 @@ from src.config_multiple_binary_labels import (
     INCLUDE_DISTRICT_ECON,
     RAW_DATA_DIR,
     COMMITTEE_PATH,
-    INCLUDE_COMMITTEES 
+    INCLUDE_COMMITTEES,
+    INCLUDE_COMPANY_SIC,
+    INCLUDE_COMPANY_FINANCIALS,
+    SIC_PATH,
+    FINANCIALS_PATH
 )
 
 # Import the scripts to handle specific data lookups
 from src.district_economic_data import DistrictEconomicLookup
 from src.committee_data import CommitteeLookup
+from src.company_data import CompanySICLookup, CompanyFinancialsLookup
 
 # ==========================================
 #              CONFIGURATION
@@ -36,13 +41,17 @@ CONFIG = {
     'IDEOLOGY_PATH': 'data/raw/ideology_scores_quarterly.csv',
     'MEMBERS_PATH': 'data/raw/HSall_members.csv',
     'RAW_DATA_DIR': RAW_DATA_DIR,
-    'COMMITTEE_PATH': COMMITTEE_PATH, # <--- NEW
+    'COMMITTEE_PATH': COMMITTEE_PATH,
+    'SIC_PATH': SIC_PATH,
+    'FINANCIALS_PATH': FINANCIALS_PATH,
     'TARGET_COLUMNS': TARGET_COLUMNS,
     'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
     'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
     'INCLUDE_IDEOLOGY': INCLUDE_IDEOLOGY,
     'INCLUDE_DISTRICT_ECON': INCLUDE_DISTRICT_ECON,
-    'INCLUDE_COMMITTEES': INCLUDE_COMMITTEES # <--- NEW
+    'INCLUDE_COMMITTEES': INCLUDE_COMMITTEES,
+    'INCLUDE_COMPANY_SIC': INCLUDE_COMPANY_SIC,
+    'INCLUDE_COMPANY_FINANCIALS': INCLUDE_COMPANY_FINANCIALS,
 }
 
 class IdeologyLookup:
@@ -127,7 +136,7 @@ class TemporalGraphBuilder:
         else:
             self.ideology_lookup = None
             
-        # 2. District Economic Lookup (New)
+        # 2. District Economic Lookup
         if self.config.get('INCLUDE_DISTRICT_ECON', True):
             print("Initializing District Economic Data Lookup...")
             self.dist_econ_lookup = DistrictEconomicLookup(
@@ -137,7 +146,7 @@ class TemporalGraphBuilder:
         else:
             self.dist_econ_lookup = None
 
-        # 3. Committee Lookup (NEW)
+        # 3. Committee Lookup
         if self.config.get('INCLUDE_COMMITTEES', True):
             print("Initializing Committee Data Lookup...")
             self.committee_lookup = CommitteeLookup(
@@ -146,6 +155,18 @@ class TemporalGraphBuilder:
             )
         else:
             self.committee_lookup = None
+        
+        # 4. Company SIC
+        if self.config.get('INCLUDE_COMPANY_SIC', True):
+            print("Initializing Company SIC Lookup...")
+            self.sic_lookup = CompanySICLookup(self.config['SIC_PATH'])
+        else: self.sic_lookup = None
+
+        # 5. Company Financials
+        if self.config.get('INCLUDE_COMPANY_FINANCIALS', True):
+            print("Initializing Company Financials Lookup...")
+            self.fin_lookup = CompanyFinancialsLookup(self.config['FINANCIALS_PATH'])
+        else: self.fin_lookup = None
         
     def _build_mappings(self):
         pols = self.transactions['BioGuideID'].unique()
@@ -169,7 +190,12 @@ class TemporalGraphBuilder:
         try: return float(clean)
         except: return 0.0
         
-    def _get_dynamic_features(self, row, ideology_scores, district_vector, committee_vector, committee_names):
+    def _get_dynamic_features(self, row, 
+                              ideology_scores, 
+                              district_vector, 
+                              committee_vector, committee_names,
+                              sic_vector, sic_names,
+                              fin_vector, fin_names):
         feats = []
         names = []
 
@@ -197,18 +223,30 @@ class TemporalGraphBuilder:
             feats.extend(ideology_scores) 
             names.extend(["ideology_eco", "ideology_soc"])
             
-        # 5. District Economics (New)
+        # 5. District Economics
         if district_vector is not None:
             feats.extend(district_vector.tolist())
             names.extend([f"econ_feat_{i}" for i in range(len(district_vector))])
 
-        # 6. Committee Membership (NEW)
+        # 6. Committee Membership
         if committee_vector is not None:
             feats.extend(committee_vector.tolist())
             if committee_names:
                 names.extend(committee_names)
             else:
                 names.extend([f"comm_feat_{i}" for i in range(len(committee_vector))])
+
+        # 7. Company SIC
+        if sic_vector is not None:
+            feats.extend(sic_vector.tolist())
+            if sic_names: names.extend(sic_names)
+            else: names.extend([f"sic_feat_{i}" for i in range(len(sic_vector))])
+
+        # 8. Company Financials
+        if fin_vector is not None:
+            feats.extend(fin_vector.tolist())
+            if fin_names: names.extend(fin_names)
+            else: names.extend([f"fin_feat_{i}" for i in range(len(fin_vector))])
 
         return feats, names
 
@@ -286,15 +324,29 @@ class TemporalGraphBuilder:
             if include_econ and self.dist_econ_lookup:
                 dist_vec = self.dist_econ_lookup.get_district_vector(pid, ts)
 
-            # Committees (NEW)
+            # Committees
             comm_vec = None
             comm_names = []
             if self.committee_lookup:
                 comm_vec = self.committee_lookup.get_committee_vector(pid, ts)
                 comm_names = self.committee_lookup.get_feature_names()
+
+            # Company Features
+            sic_vec, sic_names = None, []
+            if self.sic_lookup:
+                sic_vec = self.sic_lookup.get_sic_vector(ticker)
+                sic_names = self.sic_lookup.get_feature_names()
+
+            fin_vec, fin_names = None, []
+            if self.fin_lookup:
+                fin_vec = self.fin_lookup.get_financial_vector(ticker, ts)
+                fin_names = self.fin_lookup.get_feature_names()
             
             # Construct Msg
-            msg_vector, feature_names = self._get_dynamic_features(row, ideology_scores, dist_vec, comm_vec, comm_names)
+            msg_vector, feature_names = self._get_dynamic_features(
+                row, ideology_scores, dist_vec, comm_vec, comm_names,
+                sic_vec, sic_names, fin_vec, fin_names # <--- Passed new vectors
+            )
             msg.append(msg_vector)
             
             # Price
