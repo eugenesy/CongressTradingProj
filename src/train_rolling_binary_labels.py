@@ -57,6 +57,13 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
     data = data.to(device)
     results = []
     
+    # === HYPERPARAMETERS ===
+    # These must match src/models_tgn_binary_labels.py EXACTLY
+    RAW_MSG_DIM = 5
+    TIME_DIM = 100
+    NODE_EMBEDDING_DIM = 100  # Output dimension of the GNN (z)
+    PRICE_EMB_DIM = 32        # Hardcoded in TGN class (__init__)
+    
     # ---------------------------------------------------------
     # Helper: Decode "Interval Class" -> "Cumulative Binary Flags"
     # ---------------------------------------------------------
@@ -80,11 +87,17 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
     
     # Feature Construction Helper
     def get_edge_attr(n_id, edge_index, e_id, batch_t):
+        # FIX: Calculate dimension based on the MODEL's internal structure
+        # Edge Feature = Time(100) + Msg(5) + Price(32) + Label(1) + Age(1) = 139
+        expected_dim = TIME_DIM + RAW_MSG_DIM + PRICE_EMB_DIM + 2
+        
         if len(e_id) == 0:
-            return torch.zeros((0, 137), device=device)
+            return torch.zeros((0, expected_dim), device=device)
         
         hist_t = data.t[e_id]
         hist_msg = data.msg[e_id]
+        
+        # This returns [N, 32] because PriceEncoder is hardcoded to 32 hidden units
         hist_price_emb = model.get_price_embedding(data.price_seq[e_id])
         
         target_nodes = n_id[edge_index[1]]
@@ -119,10 +132,6 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                 next_period_start = pd.Timestamp(year=year, month=month+1, day=1)
             
             # Define Gap and Train End
-            # Train: < Gap Start
-            # Gap: >= Gap Start & < Test Start
-            # Test: >= Test Start & < Next Period Start
-            
             train_end = current_period_start - pd.DateOffset(months=1)
             gap_start = train_end
             gap_end = current_period_start
@@ -156,8 +165,13 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
             
             # 2. INIT MODEL
             model = TGN(
-                num_nodes=num_nodes, raw_msg_dim=3, memory_dim=100, time_dim=100, embedding_dim=100,
-                num_parties=num_parties, num_states=num_states,
+                num_nodes=num_nodes, 
+                raw_msg_dim=RAW_MSG_DIM, 
+                memory_dim=100, 
+                time_dim=TIME_DIM, 
+                embedding_dim=NODE_EMBEDDING_DIM, # 100
+                num_parties=num_parties, 
+                num_states=num_states,
                 num_classes=num_classes 
             ).to(device)
             
@@ -305,8 +319,13 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
             print(f"  --- Phase 2: Retraining on FULL data for {best_epoch} epochs ---")
             
             model = TGN(
-                num_nodes=num_nodes, raw_msg_dim=3, memory_dim=100, time_dim=100, embedding_dim=100,
-                num_parties=num_parties, num_states=num_states,
+                num_nodes=num_nodes, 
+                raw_msg_dim=RAW_MSG_DIM, 
+                memory_dim=100, 
+                time_dim=TIME_DIM, 
+                embedding_dim=NODE_EMBEDDING_DIM, # 100
+                num_parties=num_parties, 
+                num_states=num_states,
                 num_classes=num_classes 
             ).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=0.001)

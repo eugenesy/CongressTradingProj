@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 import os
 import sys
+import bisect
 
 # ==========================================
 #              IMPORTS & SETUP
@@ -13,7 +14,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.config_multiple_binary_labels import (
     TX_PATH, 
-    TARGET_COLUMNS,          # New Import
+    TARGET_COLUMNS,
     LABEL_LOOKAHEAD_DAYS, 
     MIN_TICKER_FREQ
 )
@@ -22,10 +23,100 @@ from src.config_multiple_binary_labels import (
 #              CONFIGURATION
 # ==========================================
 CONFIG = {
+    'TX_PATH': TX_PATH,
+    'IDEOLOGY_PATH': 'data/raw/ideology_scores_quarterly.csv',
+    'MEMBERS_PATH': 'data/raw/HSall_members.csv', # Needed for ID mapping
     'TARGET_COLUMNS': TARGET_COLUMNS,
     'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
     'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
 }
+
+class IdeologyLookup:
+    """
+    Manages temporal lookups for politician ideology scores.
+    """
+    def __init__(self, ideology_path, members_path):
+        self.ideology_path = ideology_path
+        self.members_path = members_path
+        self.bioguide_to_icpsr = {}
+        self.history = {} # {icpsr: [(timestamp, [coord1, coord2]), ...]}
+        
+        self._load_mapping()
+        self._load_scores()
+        
+    def _load_mapping(self):
+        """Creates BioGuideID -> ICPSR mapping from Voteview members file."""
+        if not os.path.exists(self.members_path):
+            print(f"Warning: Members file not found at {self.members_path}. Ideology linking may fail.")
+            return
+
+        df = pd.read_csv(self.members_path)
+        # Filter to relevant columns and drop duplicates
+        if 'bioguide_id' in df.columns and 'icpsr' in df.columns:
+            subset = df[['bioguide_id', 'icpsr']].dropna().drop_duplicates()
+            self.bioguide_to_icpsr = dict(zip(subset['bioguide_id'], subset['icpsr']))
+        print(f"Loaded ID mapping for {len(self.bioguide_to_icpsr)} politicians.")
+
+    def _load_scores(self):
+        """Loads temporal ideology scores into sorted lists."""
+        if not os.path.exists(self.ideology_path):
+            print(f"Warning: Ideology file not found at {self.ideology_path}")
+            return
+
+        df = pd.read_csv(self.ideology_path)
+        df['date_dt'] = pd.to_datetime(df['date_window_end'])
+        
+        # Sort by date ensures our lists are monotonic
+        df = df.sort_values('date_dt')
+        
+        count = 0
+        for _, row in df.iterrows():
+            icpsr = int(row['icpsr'])
+            ts = row['date_dt'].timestamp()
+            
+            # Feature Vector: [coord1D, coord2D]
+            # We can extend this to include delta from previous, errors, etc.
+            # New Code:
+            c1 = row.get('coord1D', 0.0)
+            c2 = row.get('coord2D', 0.0)
+            feats = [
+                float(c1) if pd.notnull(c1) else 0.0,
+                float(c2) if pd.notnull(c2) else 0.0
+            ]
+            
+            if icpsr not in self.history:
+                self.history[icpsr] = []
+            
+            self.history[icpsr].append((ts, feats))
+            count += 1
+            
+        print(f"Loaded {count} ideology score records.")
+
+    def get_score_at_time(self, bioguide_id, timestamp):
+        """
+        Returns the most recent ideology [coord1D, coord2D] before `timestamp`.
+        Returns [0.0, 0.0] if no history found.
+        """
+        icpsr = self.bioguide_to_icpsr.get(bioguide_id)
+        if icpsr is None or icpsr not in self.history:
+            return [0.0, 0.0] # Default neutral
+        
+        records = self.history[icpsr]
+        
+        # bisect_right finds the insertion point to maintain order.
+        # We search using (timestamp, [inf]) to ensure we find the right spot
+        # comparison logic: it compares the first element of tuple (the timestamp).
+        idx = bisect.bisect_right(records, (timestamp, []))
+        
+        if idx == 0:
+            # Timestamp is before the first recorded score. 
+            # Strategy: Return the first available score (backfill) OR neutral.
+            # Let's return the first available to avoid zeros if they have data shortly after.
+            return records[0][1]
+        
+        # Return the record immediately preceding the insertion point
+        return records[idx - 1][1]
+
 
 class TemporalGraphBuilder:
     def __init__(self, transactions_df, config):
@@ -45,6 +136,13 @@ class TemporalGraphBuilder:
         self.state_map = {'Unknown': 0}
         
         self._build_mappings()
+        
+        # Initialize Ideology Helper
+        print("Initializing Ideology Lookup...")
+        self.ideology_lookup = IdeologyLookup(
+            self.config['IDEOLOGY_PATH'], 
+            self.config['MEMBERS_PATH']
+        )
         
     def _build_mappings(self):
         # 1. Politicians
@@ -139,10 +237,12 @@ class TemporalGraphBuilder:
             
             # Time
             if pd.isna(row['Traded_DT']): continue
-            ts = row['Traded_DT'].timestamp() - base_time
-            t.append(int(ts))
+            ts = row['Traded_DT'].timestamp()
+            t_norm = ts - base_time
+            t.append(int(t_norm))
             
-            # Features
+            # --- FEATURE CONSTRUCTION (MSG) ---
+            # 1. Transaction Features
             amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
             is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
             
@@ -151,7 +251,15 @@ class TemporalGraphBuilder:
             else:
                 gap_days = 30
             gap_feat = np.log1p(gap_days)
-            msg.append([amt, is_buy, gap_feat])
+            
+            # 2. Dynamic Ideology Features
+            # Look up the score valid at the time of trade
+            ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
+            
+            # Combine into Message Vector: [Amount, IsBuy, Gap, Coord1D, Coord2D]
+            # msg dim increases from 3 to 5
+            msg_vector = [amt, is_buy, gap_feat] + ideology_scores
+            msg.append(msg_vector)
             
             # Price Feature
             if tid in price_map:
@@ -160,19 +268,8 @@ class TemporalGraphBuilder:
                 p_feat = torch.zeros((14,), dtype=torch.float32)
             price_seqs.append(p_feat)
             
-            # --- STRUCTURED LABEL HANDLING ---
-            # We treat the problem as classification into N+1 disjoint intervals.
-            # We assume the CSV columns are binary flags (0.0 or 1.0).
-            # If we sum them, we get the index of the interval.
-            # Example: [>0, >4, >8]. Actual return 6%. Flags: [1, 1, 0]. Sum: 2.
-            # Class 2 represents "Between 4 and 8".
-            
-            # Extract flags for this row
-            # Infer objects to proper types first to avoid FutureWarning
+            # --- LABEL HANDLING ---
             flags = row[target_cols].infer_objects(copy=False).fillna(0.0).values.astype(int)
-            
-            # The class index is simply the sum of flags.
-            # Note: This relies on the columns being monotonic and sorted in config.
             label_idx = int(np.sum(flags))
             y.append(label_idx)
             
@@ -182,16 +279,15 @@ class TemporalGraphBuilder:
             
         print(f"Skipped {skipped} transactions.")
         
-        # Calculate Number of Classes for the Model
-        # If we have N thresholds, we have N+1 possible intervals (0 to N).
+        # Calculate Number of Classes
         num_classes = len(target_cols) + 1
         
         data = TemporalData(
             src=torch.tensor(src, dtype=torch.long),
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
-            msg=torch.tensor(msg, dtype=torch.float),
-            y=torch.tensor(y, dtype=torch.long) # LongTensor for Class Index
+            msg=torch.tensor(msg, dtype=torch.float), # Now 5 dims
+            y=torch.tensor(y, dtype=torch.long)
         )
         
         if price_seqs:
@@ -204,18 +300,17 @@ class TemporalGraphBuilder:
         data.x_static = x_static
         data.num_parties = len(self.party_map)
         data.num_states = len(self.state_map)
-        
-        # Save metadata so the model knows output size
         data.num_classes = num_classes
         
         return data
 
 if __name__ == "__main__":
-    df = pd.read_csv(TX_PATH)
+    df = pd.read_csv(CONFIG['TX_PATH'])
     builder = TemporalGraphBuilder(df, CONFIG)
     data = builder.process()
     
     print(data)
+    print(f"Msg Dimension: {data.msg.shape[1]}") # Should be 5
     print(f"Task: Classification with {data.num_classes} intervals.")
         
     os.makedirs("data", exist_ok=True)
