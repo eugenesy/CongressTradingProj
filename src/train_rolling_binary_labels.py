@@ -5,9 +5,10 @@ from tqdm import tqdm
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 import sys
 import os
-import matplotlib.pyplot as plt
 import warnings
 from sklearn.exceptions import UndefinedMetricWarning
+import datetime
+import argparse
 
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
@@ -45,11 +46,11 @@ class Logger(object):
         self.terminal.flush()
         self.log.flush()
 
-
 def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, num_classes,
+                       msg_dim, price_dim,  # <--- NEW: Dynamic Dimensions
                        target_names=None,
                        target_years=TARGET_YEARS, max_epochs=20, patience=5):
     
@@ -58,12 +59,17 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
     results = []
     
     # === HYPERPARAMETERS ===
-    # These must match src/models_tgn_binary_labels.py EXACTLY
-    RAW_MSG_DIM = 5
+    # Using passed dimensions instead of hardcoded constants
     TIME_DIM = 100
     NODE_EMBEDDING_DIM = 100  # Output dimension of the GNN (z)
-    PRICE_EMB_DIM = 32        # Hardcoded in TGN class (__init__)
     
+    # Note: TGN class might internally map price_dim -> 32 (via PriceEncoder).
+    # We assume the PriceEncoder output is 32 for the concatenation below.
+    # If you change the PriceEncoder hidden size, update this constant.
+    PRICE_EMB_OUTPUT_DIM = 32        
+    
+    print(f"DEBUG: Initializing training with Msg Dim={msg_dim}, Price Input Dim={price_dim}")
+
     # ---------------------------------------------------------
     # Helper: Decode "Interval Class" -> "Cumulative Binary Flags"
     # ---------------------------------------------------------
@@ -87,9 +93,9 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
     
     # Feature Construction Helper
     def get_edge_attr(n_id, edge_index, e_id, batch_t):
-        # FIX: Calculate dimension based on the MODEL's internal structure
-        # Edge Feature = Time(100) + Msg(5) + Price(32) + Label(1) + Age(1) = 139
-        expected_dim = TIME_DIM + RAW_MSG_DIM + PRICE_EMB_DIM + 2
+        # FIX: Calculate dimension dynamically based on data
+        # Edge Feature = Time(100) + Msg(msg_dim) + Price(32) + Label(1) + Age(1)
+        expected_dim = TIME_DIM + msg_dim + PRICE_EMB_OUTPUT_DIM + 2
         
         if len(e_id) == 0:
             return torch.zeros((0, expected_dim), device=device)
@@ -166,7 +172,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
             # 2. INIT MODEL
             model = TGN(
                 num_nodes=num_nodes, 
-                raw_msg_dim=RAW_MSG_DIM, 
+                raw_msg_dim=msg_dim,  # <--- PASSED DYNAMICALLY
                 memory_dim=100, 
                 time_dim=TIME_DIM, 
                 embedding_dim=NODE_EMBEDDING_DIM, # 100
@@ -210,7 +216,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                     optimizer.zero_grad()
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
@@ -243,7 +249,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                 for batch in gap_loader:
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     model.memory.update_state(src, dst, t, augmented_msg)
@@ -257,7 +263,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
@@ -320,7 +326,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
             
             model = TGN(
                 num_nodes=num_nodes, 
-                raw_msg_dim=RAW_MSG_DIM, 
+                raw_msg_dim=msg_dim,  # <--- PASSED DYNAMICALLY
                 memory_dim=100, 
                 time_dim=TIME_DIM, 
                 embedding_dim=NODE_EMBEDDING_DIM, # 100
@@ -344,7 +350,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                     optimizer.zero_grad()
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
@@ -374,7 +380,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                 for batch in gap_loader:
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     model.memory.update_state(src, dst, t, augmented_msg)
@@ -391,7 +397,7 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
                 batch = batch.to(device)
                 src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                 
-                price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
                 price_emb = model.get_price_embedding(price_seq)
                 augmented_msg = torch.cat([msg, price_emb], dim=1)
                 
@@ -461,32 +467,20 @@ def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, nu
 # ==========================================
 
 if __name__ == "__main__":
-
-    # === LOGGING ===
-    import datetime
-    
-    # Create logs directory if it doesn't exist
+    # 1. SETUP LOGGING
     os.makedirs(LOGS_DIR, exist_ok=True)
-    
-    # Define filename with timestamp
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_filename = f"multilabel_binary_{timestamp}.txt"
-    log_path = os.path.join(LOGS_DIR, log_filename)
-    
-    # Redirect stdout to both console and file
+    log_path = os.path.join(LOGS_DIR, f"multilabel_binary_{timestamp}.txt")
     sys.stdout = Logger(log_path)
     print(f"Starting script... Output is being saved to: {log_path}")
-    # =========================
 
-    import argparse
+    # 2. PARSE ARGS
     parser = argparse.ArgumentParser()
-    # Accept a list of years, e.g. --years 2022 2023
-    parser.add_argument("--years", nargs="+", type=int, default=TARGET_YEARS, help="Years to train/evaluate on (e.g. 2022 2023)")
+    parser.add_argument("--years", nargs="+", type=int, default=TARGET_YEARS, help="Years to train on")
     args = parser.parse_args()
 
-    # Define paths
+    # 3. LOAD DATA
     data_path = os.path.join(PROCESSED_DATA_DIR, "temporal_data.pt")
-    
     if os.path.exists(data_path):
         print(f"Loading data from {data_path}...")
         data = torch.load(data_path, weights_only=False)
@@ -494,65 +488,88 @@ if __name__ == "__main__":
         print(f"ERROR: Data file not found at {data_path}")
         sys.exit(1)
 
-    # === DATA SANITIZATION FIX ===
-    # The 'Undetermined' rows in CSV result in sum(-1 flags) = negative numbers.
-    # We must map these to -100 so CrossEntropyLoss ignores them.
+    # 4. === METADATA EXTRACTION & CLEANUP ===
+    # CRITICAL: We must extract these values and then DELETE them from the object.
+    # If we leave them attached, data[idx] will crash trying to slice them.
+
+    # -- Msg Dim --
+    if hasattr(data, 'msg_dim'):
+        msg_dim = int(data.msg_dim) # Cast to int
+        del data.msg_dim            # <--- DELETE
+    else:
+        print("Warning: 'msg_dim' not found. Inferring from tensor.")
+        msg_dim = data.msg.shape[1]
+
+    # -- Price Dim --
+    if hasattr(data, 'price_dim'):
+        price_dim = int(data.price_dim)
+        del data.price_dim          # <--- DELETE
+    else:
+        if hasattr(data, 'price_seq'):
+             price_dim = data.price_seq.shape[1]
+        else:
+             price_dim = 14 
+    
+    # -- Feature Names (List) --
+    if hasattr(data, 'msg_feature_names'):
+        # We don't need this for training, just clean it up so it doesn't crash slicing
+        del data.msg_feature_names  # <--- DELETE
+
+    print(f"Detected Dynamic Dimensions -> Msg: {msg_dim} | Price: {price_dim}")
+
+    # 5. DATA SANITIZATION
     if data.y.min() < 0:
         bad_count = (data.y < 0).sum().item()
-        print(f"Sanitizing Data: Found {bad_count} invalid targets (e.g. -9). Mapping to -100 (ignore_index).")
+        print(f"Sanitizing Data: Found {bad_count} invalid targets. Mapping to -100 (ignore_index).")
         data.y[data.y < 0] = -100
-    # =============================
 
+    # 6. EXTRACT OTHER SCALARS
+    # We must also extract and delete these if they were attached
+    
     if hasattr(data, 'num_classes'):
-        num_classes = data.num_classes
-        del data.num_classes  
+        num_classes = int(data.num_classes)
+        del data.num_classes
     else:
         print("Warning: num_classes not found. Inferring from config.")
-        from src.config import TARGET_COLUMNS
+        from src.config_multiple_binary_labels import TARGET_COLUMNS
         num_classes = len(TARGET_COLUMNS) + 1
         
     if hasattr(data, 'num_nodes'):
-        num_nodes = data.num_nodes
+        num_nodes = int(data.num_nodes)
         del data.num_nodes
-    else: num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
-        
+    else: 
+        num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
+
     if hasattr(data, 'num_parties'):
-        num_parties = data.num_parties
+        num_parties = int(data.num_parties)
         del data.num_parties
-    else: num_parties = 5
+    else: 
+        num_parties = 5
 
     if hasattr(data, 'num_states'):
-        num_states = data.num_states
+        num_states = int(data.num_states)
         del data.num_states
-    else: num_states = 60
+    else: 
+        num_states = 60
 
     print(f"Model will train on {num_classes} intervals (Decoding to {num_classes-1} binary labels).")
-    print(f"Target Years: {args.years}")
 
+    # 7. LOAD DATAFRAME FOR ALIGNMENT
     print("Loading CSV for Date Alignment...")
     df = pd.read_csv(TX_PATH)
     df['Traded'] = pd.to_datetime(df['Traded'])
-    
-    # 1. Sort exactly as temporal_data.py did (Crucial for index alignment)
     df = df.sort_values('Traded').reset_index(drop=True)
     
-    # 2. Filter Rare Tickers (Must match logic in temporal_data.py)
     ticker_counts = df['Ticker'].value_counts()
     valid_tickers = ticker_counts[ticker_counts >= MIN_TICKER_FREQ].index
-    
-    # 3. Apply Filter: Keep rows with valid tickers AND valid dates
     mask = df['Ticker'].isin(valid_tickers) & df['Traded'].notna()
     df = df[mask].reset_index(drop=True)
     
     print(f"Aligned DF Size: {len(df)} | PyG Data Size: {data.num_events}")
     
-    # Safety Check
-    if len(df) != data.num_events:
-        print("WARNING: Row count mismatch! Date alignment may still be off.")
-        print(f"Diff: {len(df) - data.num_events} rows.")
-    
-    # 4. Run Training
+    # 8. START TRAINING
     train_and_evaluate(data, df, num_nodes, num_parties, num_states, num_classes, 
+                       msg_dim, price_dim, 
                        target_names=TARGET_COLUMNS,
                        target_years=args.years)
     

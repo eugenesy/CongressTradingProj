@@ -172,6 +172,45 @@ class TemporalGraphBuilder:
             return float(clean)
         except:
             return 0.0
+        
+    # Inside TemporalGraphBuilder class
+
+    def _get_dynamic_features(self, row, ideology_scores):
+        """
+        Central place to define dynamic edge features.
+        Returns: List[float] and List[str] (feature names)
+        """
+        feats = []
+        names = []
+
+        # 1. Trade Amount (Log)
+        amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
+        feats.append(amt)
+        names.append("log_amount")
+
+        # 2. Direction
+        is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
+        feats.append(is_buy)
+        names.append("is_buy")
+
+        # 3. Reporting Gap
+        if pd.notnull(row['Filed_DT']):
+            gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days)
+        else:
+            gap_days = 30
+        gap_feat = np.log1p(gap_days)
+        feats.append(gap_feat)
+        names.append("log_gap_days")
+
+        # 4. Ideology (External Lookup)
+        # ideology_scores is passed in because it depends on the loop's timestamp
+        feats.extend(ideology_scores) 
+        names.extend(["ideology_eco", "ideology_soc"])
+
+        # --- ADD NEW FEATURES HERE IN THE FUTURE ---
+        # e.g., feats.append(row['New_Metric']); names.append('new_metric')
+
+        return feats, names
 
     def process(self):
         src, dst, t, msg, y = [], [], [], [], []
@@ -257,8 +296,8 @@ class TemporalGraphBuilder:
             ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
             
             # Combine into Message Vector: [Amount, IsBuy, Gap, Coord1D, Coord2D]
-            # msg dim increases from 3 to 5
-            msg_vector = [amt, is_buy, gap_feat] + ideology_scores
+            # dynamic feature extraction
+            msg_vector, feature_names = self._get_dynamic_features(row, ideology_scores)
             msg.append(msg_vector)
             
             # Price Feature
@@ -289,6 +328,10 @@ class TemporalGraphBuilder:
             msg=torch.tensor(msg, dtype=torch.float), # Now 5 dims
             y=torch.tensor(y, dtype=torch.long)
         )
+
+        data.msg_feature_names = feature_names  # Save names for debugging
+        data.msg_dim = len(feature_names)       # Save explicit dimension
+        data.price_dim = 14                     # Save explicit price dimension
         
         if price_seqs:
             data.price_seq = torch.stack(price_seqs)
