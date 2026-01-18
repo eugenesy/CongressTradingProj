@@ -29,6 +29,8 @@ STATE_TO_ABBREV = {
 class DistrictEconomicLookup:
     def __init__(self, raw_data_dir, members_path):
         self.raw_data_dir = raw_data_dir
+        # UPDATED: Point to specific subfolder
+        self.district_industry_path = os.path.join(self.raw_data_dir, "district_industry")
         self.members_path = members_path
         
         # 1. Load Release Dates
@@ -48,9 +50,10 @@ class DistrictEconomicLookup:
         Loads survey release dates to prevent lookahead bias.
         Returns list of dicts sorted by date: [{'year': 2012, 'release': timestamp}, ...]
         """
-        path = os.path.join(self.raw_data_dir, "survey_release_dates.csv")
+        # UPDATED: Use district_industry_path
+        path = os.path.join(self.district_industry_path, "survey_release_dates.csv")
         if not os.path.exists(path):
-            print("Warning: survey_release_dates.csv not found. Assuming next-year availability.")
+            print(f"Warning: survey_release_dates.csv not found in {self.district_industry_path}. Assuming next-year availability.")
             return []
             
         df = pd.read_csv(path)
@@ -140,7 +143,13 @@ class DistrictEconomicLookup:
         """
         data_store = {}
         
-        files = [f for f in os.listdir(self.raw_data_dir) if f.endswith('_CB_survey.csv') or f.endswith('_CB_estimates.csv')]
+        # UPDATED: Check correct path
+        if not os.path.exists(self.district_industry_path):
+            print(f"Error: Directory {self.district_industry_path} does not exist.")
+            return {}
+
+        # UPDATED: Search in district_industry_path
+        files = [f for f in os.listdir(self.district_industry_path) if f.endswith('_CB_survey.csv') or f.endswith('_CB_estimates.csv')]
         
         for f in files:
             # Extract year from filename (e.g. 2013_CB_survey.csv)
@@ -149,7 +158,8 @@ class DistrictEconomicLookup:
             except:
                 continue
                 
-            path = os.path.join(self.raw_data_dir, f)
+            # UPDATED: Join with district_industry_path
+            path = os.path.join(self.district_industry_path, f)
             df = pd.read_csv(path)
             
             # Normalize column names (strip whitespace, upper case)
@@ -169,10 +179,6 @@ class DistrictEconomicLookup:
                 # Missing critical columns
                 continue
 
-            # Iterate rows
-            current_geo_key = None # (State, Dist)
-            current_congress = None
-            
             # Temporary storage for the current district being processed
             # We need to gather all NAICS rows for one district before saving the vector
             # But the file format is usually sorted by District then NAICS.

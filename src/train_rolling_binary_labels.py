@@ -576,6 +576,17 @@ if __name__ == "__main__":
     else: 
         num_states = 60
 
+    # === NEW: Convert remaining ints to Tensors so they persist correctly ===
+    # This fixes the AttributeError while keeping the data on the object
+    if hasattr(data, 'num_pols'):
+        # Convert to a 1-element tensor. 
+        # PyG will see size(0)=1 != num_events, so it will copy it to train_data/test_data safely.
+        data.num_pols = torch.tensor([data.num_pols])
+        
+    if hasattr(data, 'num_comps'):
+        data.num_comps = torch.tensor([data.num_comps])
+    # =======================================================================
+
     print(f"Model will train on {num_classes} intervals (Decoding to {num_classes-1} binary labels).")
 
     # 7. LOAD DATAFRAME FOR ALIGNMENT

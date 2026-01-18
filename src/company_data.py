@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import bisect
+from tqdm import tqdm  # <--- Added import
 
 # Standard SIC Divisions (High-level grouping)
 # We map 4-digit SIC codes to these ~11 broad sectors.
@@ -104,7 +105,8 @@ class CompanyFinancialsLookup:
         
         grouped = df.groupby('Ticker')
         
-        for ticker, group in grouped:
+        # --- UPDATE: Added tqdm for progress tracking ---
+        for ticker, group in tqdm(grouped, desc="Processing Financial History", total=len(grouped)):
             # Sort by date
             group = group.sort_values('FiledDate')
             

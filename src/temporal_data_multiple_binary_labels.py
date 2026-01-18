@@ -1,530 +1,401 @@
 import torch
-import numpy as np
+from torch_geometric.data import TemporalData
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
-from sklearn.metrics import accuracy_score, f1_score, classification_report
-import sys
 import os
-import warnings
-from sklearn.exceptions import UndefinedMetricWarning
-import datetime
-import argparse
-
-warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
+import sys
+import bisect
 
 # ==========================================
 #              IMPORTS & SETUP
 # ==========================================
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import Config Variables
 from src.config_multiple_binary_labels import (
-    PROCESSED_DATA_DIR,
-    TX_PATH,
+    TX_PATH, 
     TARGET_COLUMNS,
-    TARGET_YEARS,
-    RESULTS_DIR,
-    LOGS_DIR,
-    MIN_TICKER_FREQ
+    LABEL_LOOKAHEAD_DAYS, 
+    MIN_TICKER_FREQ,
+    RAW_DATA_DIR,
+    # Flags
+    INCLUDE_IDEOLOGY,
+    INCLUDE_DISTRICT_ECON,
+    INCLUDE_COMMITTEES,
+    INCLUDE_COMPANY_SIC,        
+    INCLUDE_COMPANY_FINANCIALS, 
+    # Paths
+    COMMITTEE_PATH,
+    SIC_PATH,                   
+    FINANCIALS_PATH             
 )
 
-# Import the Binary/Structured Model
-from src.models_tgn_binary_labels import TGN
-from torch_geometric.loader import TemporalDataLoader
-from torch_geometric.nn.models.tgn import LastNeighborLoader
+# Import Lookups
+from src.district_economic_data import DistrictEconomicLookup
+from src.committee_data import CommitteeLookup
+from src.company_data import CompanySICLookup, CompanyFinancialsLookup
 
-class Logger(object):
-    def __init__(self, filename):
-        self.terminal = sys.stdout
-        self.log = open(filename, "a", encoding='utf-8')
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
-
-def get_device():
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-def train_and_evaluate(data, df_filtered, num_nodes, num_parties, num_states, num_classes,
-                       msg_dim, price_dim, 
-                       target_names=None,
-                       target_years=TARGET_YEARS, 
-                       max_epochs=20, 
-                       patience=5,
-                       min_epochs=10): # <--- ADDED MIN EPOCHS DEFAULT
+# ==========================================
+#              CONFIGURATION
+# ==========================================
+CONFIG = {
+    'TX_PATH': TX_PATH,
+    'IDEOLOGY_PATH': 'data/raw/ideology_scores_quarterly.csv',
+    'MEMBERS_PATH': 'data/raw/HSall_members.csv',
+    'RAW_DATA_DIR': RAW_DATA_DIR,
+    'COMMITTEE_PATH': COMMITTEE_PATH,
+    'SIC_PATH': SIC_PATH,                 
+    'FINANCIALS_PATH': FINANCIALS_PATH,   
     
-    device = get_device()
-    data = data.to(device)
-    results = []
+    'TARGET_COLUMNS': TARGET_COLUMNS,
+    'LABEL_LOOKAHEAD_DAYS': LABEL_LOOKAHEAD_DAYS,
+    'MIN_TICKER_FREQ': MIN_TICKER_FREQ,
     
-    # === HYPERPARAMETERS ===
-    TIME_DIM = 100
-    NODE_EMBEDDING_DIM = 100 
-    PRICE_EMB_OUTPUT_DIM = 32        
-    
-    print(f"DEBUG: Initializing training with Msg Dim={msg_dim}, Price Input Dim={price_dim}")
+    'INCLUDE_IDEOLOGY': INCLUDE_IDEOLOGY,
+    'INCLUDE_DISTRICT_ECON': INCLUDE_DISTRICT_ECON,
+    'INCLUDE_COMMITTEES': INCLUDE_COMMITTEES,
+    'INCLUDE_COMPANY_SIC': INCLUDE_COMPANY_SIC,               
+    'INCLUDE_COMPANY_FINANCIALS': INCLUDE_COMPANY_FINANCIALS, 
+}
 
-    # ---------------------------------------------------------
-    # Helper: Decode "Interval Class" -> "Cumulative Binary Flags"
-    # ---------------------------------------------------------
-    def decode_to_binary(class_indices, num_thresholds):
-        if isinstance(class_indices, np.ndarray):
-            class_indices = torch.from_numpy(class_indices).to(device)
-        threshold_indices = torch.arange(num_thresholds, device=device).unsqueeze(0)
-        class_indices = class_indices.unsqueeze(1)
-        return (class_indices > threshold_indices).float()
-    
-    # Feature Construction Helper
-    def get_edge_attr(n_id, edge_index, e_id, batch_t):
-        expected_dim = TIME_DIM + msg_dim + PRICE_EMB_OUTPUT_DIM + 2
+class IdeologyLookup:
+    """
+    Manages temporal lookups for politician ideology scores.
+    """
+    def __init__(self, ideology_path, members_path):
+        self.ideology_path = ideology_path
+        self.members_path = members_path
+        self.bioguide_to_icpsr = {}
+        self.history = {} # {icpsr: [(timestamp, [coord1, coord2]), ...]}
         
-        if len(e_id) == 0:
-            return torch.zeros((0, expected_dim), device=device)
+        self._load_mapping()
+        self._load_scores()
         
-        hist_t = data.t[e_id]
-        hist_msg = data.msg[e_id]
-        hist_price_emb = model.get_price_embedding(data.price_seq[e_id])
-        
-        target_nodes = n_id[edge_index[1]]
-        last_update = model.memory.last_update[target_nodes]
-        rel_t_enc = model.memory.time_enc((last_update - hist_t).float())
-        
-        batch_max_t = batch_t.max()
-        hist_resolution = data.resolution_t[e_id]
-        is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
-        
-        raw_label = data.y[e_id].float().unsqueeze(-1)
-        raw_label[raw_label < 0] = -1.0 
-        masked_label = raw_label * is_resolved + -1.0 * (1 - is_resolved)
-        
-        age_feat = torch.log1p((batch_max_t - hist_t).float() / 86400.0).unsqueeze(-1)
-        
-        return torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
+    def _load_mapping(self):
+        if not os.path.exists(self.members_path):
+            print(f"Warning: Members file not found at {self.members_path}")
+            return
 
-    # ==========================================
-    #          YEAR / MONTH LOOP
-    # ==========================================
-    for year in target_years:
-        for month in range(1, 13):
-            # Define Time Boundaries
-            current_period_start = pd.Timestamp(year=year, month=month, day=1)
+        df = pd.read_csv(self.members_path)
+        if 'bioguide_id' in df.columns and 'icpsr' in df.columns:
+            subset = df[['bioguide_id', 'icpsr']].dropna().drop_duplicates()
+            self.bioguide_to_icpsr = dict(zip(subset['bioguide_id'], subset['icpsr']))
+        print(f"Loaded ID mapping for {len(self.bioguide_to_icpsr)} politicians.")
+
+    def _load_scores(self):
+        if not os.path.exists(self.ideology_path):
+            print(f"Warning: Ideology file not found at {self.ideology_path}")
+            return
+
+        df = pd.read_csv(self.ideology_path)
+        df['date_dt'] = pd.to_datetime(df['date_window_end'])
+        df = df.sort_values('date_dt')
+        
+        count = 0
+        for _, row in df.iterrows():
+            icpsr = int(row['icpsr'])
+            ts = row['date_dt'].timestamp()
+            c1 = row.get('coord1D', 0.0)
+            c2 = row.get('coord2D', 0.0)
+            feats = [
+                float(c1) if pd.notnull(c1) else 0.0,
+                float(c2) if pd.notnull(c2) else 0.0
+            ]
+            if icpsr not in self.history: self.history[icpsr] = []
+            self.history[icpsr].append((ts, feats))
+            count += 1
+        print(f"Loaded {count} ideology score records.")
+
+    def get_score_at_time(self, bioguide_id, timestamp):
+        icpsr = self.bioguide_to_icpsr.get(bioguide_id)
+        if icpsr is None or icpsr not in self.history:
+            return [0.0, 0.0]
+        
+        records = self.history[icpsr]
+        idx = bisect.bisect_right(records, (timestamp, []))
+        if idx == 0: return records[0][1]
+        return records[idx - 1][1]
+    
+class TemporalGraphBuilder:
+    def __init__(self, transactions_df, config):
+        self.config = config
+        self.transactions = transactions_df.copy()
+        
+        self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
+        self.transactions = self.transactions.sort_values('Traded').reset_index(drop=True)
+        self.min_freq = self.config['MIN_TICKER_FREQ']
+        
+        self.pol_id_map = {}
+        self.company_id_map = {}
+        self.party_map = {'Unknown': 0}
+        self.state_map = {'Unknown': 0}
+        
+        self._build_mappings()
+        
+        # 1. Ideology
+        if self.config.get('INCLUDE_IDEOLOGY', True):
+            print("Initializing Ideology Lookup...")
+            self.ideology_lookup = IdeologyLookup(self.config['IDEOLOGY_PATH'], self.config['MEMBERS_PATH'])
+        else: self.ideology_lookup = None
             
-            if month == 12:
-                next_period_start = pd.Timestamp(year=year+1, month=1, day=1)
-            else:
-                next_period_start = pd.Timestamp(year=year, month=month+1, day=1)
+        # 2. District Econ
+        if self.config.get('INCLUDE_DISTRICT_ECON', True):
+            print("Initializing District Economic Data Lookup...")
+            self.dist_econ_lookup = DistrictEconomicLookup(self.config['RAW_DATA_DIR'], self.config['MEMBERS_PATH'])
+        else: self.dist_econ_lookup = None
+
+        # 3. Committees
+        if self.config.get('INCLUDE_COMMITTEES', True):
+            print("Initializing Committee Data Lookup...")
+            self.committee_lookup = CommitteeLookup(self.config['COMMITTEE_PATH'], self.config['MEMBERS_PATH'])
+        else: self.committee_lookup = None
+
+        # 4. Company SIC (NEW)
+        if self.config.get('INCLUDE_COMPANY_SIC', True):
+            print("Initializing Company SIC Lookup...")
+            self.sic_lookup = CompanySICLookup(self.config['SIC_PATH'])
+        else: self.sic_lookup = None
+
+        # 5. Company Financials (NEW)
+        if self.config.get('INCLUDE_COMPANY_FINANCIALS', True):
+            print("Initializing Company Financials Lookup...")
+            self.fin_lookup = CompanyFinancialsLookup(self.config['FINANCIALS_PATH'])
+        else: self.fin_lookup = None
+        
+    def _build_mappings(self):
+        pols = self.transactions['BioGuideID'].unique()
+        self.pol_id_map = {pid: i for i, pid in enumerate(pols)}
+        
+        ticker_counts = self.transactions['Ticker'].value_counts()
+        valid_tickers = ticker_counts[ticker_counts >= self.min_freq].index
+        self.company_id_map = {t: i for i, t in enumerate(valid_tickers)}
+        
+        parties = self.transactions['Party'].fillna('Unknown').unique()
+        for p in parties:
+            if p not in self.party_map: self.party_map[p] = len(self.party_map)
             
-            train_end = current_period_start - pd.DateOffset(months=1)
-            gap_start = train_end
-            gap_end = current_period_start
+        states = self.transactions['State'].fillna('Unknown').unique()
+        for s in states:
+            if s not in self.state_map: self.state_map[s] = len(self.state_map)
             
-            print(f"\n=== RETRAINING For Window: {year}-{month:02d} ===")
+    def _parse_amount(self, amt_str):
+        if pd.isna(amt_str): return 0.0
+        clean = str(amt_str).replace('$','').replace(',','')
+        try: return float(clean)
+        except: return 0.0
+
+    def _get_dynamic_features(self, row, 
+                              ideology_scores, 
+                              district_vector, 
+                              committee_vector, comm_names,
+                              sic_vector, sic_names,          
+                              fin_vector, fin_names):         
+        feats = []
+        names = []
+
+        # 1. Trade Amount
+        amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
+        feats.append(amt)
+        names.append("log_amount")
+
+        # 2. Direction
+        is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
+        feats.append(is_buy)
+        names.append("is_buy")
+
+        # 3. Gap
+        if pd.notnull(row['Filed_DT']):
+            gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days)
+        else:
+            gap_days = 30
+        gap_feat = np.log1p(gap_days)
+        feats.append(gap_feat)
+        names.append("log_gap_days")
+
+        # 4. Ideology
+        if ideology_scores:
+            feats.extend(ideology_scores) 
+            names.extend(["ideology_eco", "ideology_soc"])
             
-            # 1. SPLIT INDICES
-            train_mask = (df_filtered['Traded'] < gap_start)
-            gap_mask = (df_filtered['Traded'] >= gap_start) & (df_filtered['Traded'] < gap_end)
-            test_mask = (df_filtered['Traded'] >= current_period_start) & (df_filtered['Traded'] < next_period_start)
+        # 5. District Economics
+        if district_vector is not None:
+            feats.extend(district_vector.tolist())
+            names.extend([f"econ_feat_{i}" for i in range(len(district_vector))])
             
-            train_idx_np = np.where(train_mask)[0]
-            gap_idx_np = np.where(gap_mask)[0]
-            test_idx_np = np.where(test_mask)[0]
+        # 6. Committee Membership
+        if committee_vector is not None:
+            feats.extend(committee_vector.tolist())
+            if comm_names: names.extend(comm_names)
+            else: names.extend([f"comm_feat_{i}" for i in range(len(committee_vector))])
+
+        # 7. Company SIC 
+        if sic_vector is not None:
+            feats.extend(sic_vector.tolist())
+            if sic_names: names.extend(sic_names)
+            else: names.extend([f"sic_feat_{i}" for i in range(len(sic_vector))])
+
+        # 8. Company Financials 
+        if fin_vector is not None:
+            feats.extend(fin_vector.tolist())
+            if fin_names: names.extend(fin_names)
+            else: names.extend([f"fin_feat_{i}" for i in range(len(fin_vector))])
+
+        return feats, names
+
+    def process(self):
+        src, dst, t, msg, y = [], [], [], [], []
+        resolution_t = []
+        
+        # ... [Static Features Logic unchanged] ...
+        
+        num_pols = len(self.pol_id_map)
+        num_comps = len(self.company_id_map)
+        total_nodes = num_pols + num_comps
+        x_static = torch.zeros((total_nodes, 2), dtype=torch.long)
+        
+        pol_meta = self.transactions.drop_duplicates('BioGuideID').set_index('BioGuideID')
+        for pid, idx in self.pol_id_map.items():
+            if pid in pol_meta.index:
+                row = pol_meta.loc[pid]
+                if isinstance(row, pd.DataFrame): row = row.iloc[0]
+                p_code = self.party_map.get(row.get('Party', 'Unknown'), 0)
+                s_code = self.state_map.get(row.get('State', 'Unknown'), 0)
+                x_static[idx] = torch.tensor([p_code, s_code])
+
+        if len(self.transactions) > 0:
+            base_time = self.transactions['Traded_DT'].min().timestamp()
+        else: base_time = 0
             
-            max_id = len(data.src)
-            train_idx = torch.tensor([i for i in train_idx_np if i < max_id], dtype=torch.long)
-            gap_idx = torch.tensor([i for i in gap_idx_np if i < max_id], dtype=torch.long)
-            test_idx = torch.tensor([i for i in test_idx_np if i < max_id], dtype=torch.long)
+        skipped = 0
+        self.transactions['Filed_DT'] = pd.to_datetime(self.transactions['Filed'])
+        
+        if os.path.exists("data/price_sequences.pt"):
+            print("Loading Price Sequences...")
+            price_map = torch.load("data/price_sequences.pt")
+        else:
+            print("Warning: data/price_sequences.pt not found. Using zero sequences.")
+            price_map = {}
             
-            if len(test_idx) == 0:
-                print(f"No trades in {year}-{month:02d}, skipping.")
+        price_seqs = []
+        target_cols = self.config['TARGET_COLUMNS']
+        lookahead_days = self.config['LABEL_LOOKAHEAD_DAYS']
+        
+        # Missing column check
+        missing = [c for c in target_cols if c not in self.transactions.columns]
+        if missing: raise ValueError(f"Missing columns: {missing}")
+
+        for _, row in tqdm(self.transactions.iterrows(), total=len(self.transactions), desc="Building Temporal Events"):
+            pid = row['BioGuideID']
+            ticker = row['Ticker']
+            tid = row.get('transaction_id', -1)
+            
+            if pid not in self.pol_id_map or ticker not in self.company_id_map:
+                skipped += 1
                 continue
+            
+            p_idx = self.pol_id_map[pid]
+            c_idx = self.company_id_map[ticker] + len(self.pol_id_map)
+            
+            src.append(p_idx)
+            dst.append(c_idx)
+            
+            if pd.isna(row['Traded_DT']): continue
+            ts = row['Traded_DT'].timestamp()
+            t_norm = ts - base_time
+            t.append(int(t_norm))
+            
+            # --- CONTEXT LOOKUPS ---
+            # 1-3. Political Features
+            ideology_scores = []
+            if self.ideology_lookup: ideology_scores = self.ideology_lookup.get_score_at_time(pid, ts)
                 
-            train_data = data[train_idx]
-            gap_data = data[gap_idx]
-            test_data = data[test_idx]
+            dist_vec = None
+            if self.dist_econ_lookup: dist_vec = self.dist_econ_lookup.get_district_vector(pid, ts)
+                
+            comm_vec, comm_names = None, []
+            if self.committee_lookup:
+                comm_vec = self.committee_lookup.get_committee_vector(pid, ts)
+                comm_names = self.committee_lookup.get_feature_names()
+                
+            # 4-5. Company Features 
+            sic_vec, sic_names = None, []
+            if self.sic_lookup:
+                sic_vec = self.sic_lookup.get_sic_vector(ticker)
+                sic_names = self.sic_lookup.get_feature_names()
+                
+            fin_vec, fin_names = None, []
+            if self.fin_lookup:
+                fin_vec = self.fin_lookup.get_financial_vector(ticker, ts)
+                fin_names = self.fin_lookup.get_feature_names()
             
-            print(f"Train: {len(train_data.src)} | Gap: {len(gap_data.src)} | Test: {len(test_data.src)}")
+            # Construct Msg
+            msg_vector, feature_names = self._get_dynamic_features(
+                row, ideology_scores, dist_vec, comm_vec, comm_names,
+                sic_vec, sic_names, fin_vec, fin_names 
+            )
+            msg.append(msg_vector)
             
-            # 2. INIT MODEL
-            model = TGN(
-                num_nodes=num_nodes, 
-                raw_msg_dim=msg_dim,
-                memory_dim=100, 
-                time_dim=TIME_DIM, 
-                embedding_dim=NODE_EMBEDDING_DIM,
-                num_parties=num_parties, 
-                num_states=num_states,
-                num_classes=num_classes 
-            ).to(device)
+            # Price
+            if tid in price_map: p_feat = price_map[tid]
+            else: p_feat = torch.zeros((14,), dtype=torch.float32)
+            price_seqs.append(p_feat)
+            
+            # Label
+            flags = row[target_cols].infer_objects(copy=False).fillna(0.0).values.astype(int)
+            label_idx = int(np.sum(flags))
+            y.append(label_idx)
+            
+            # Resolution
+            resolution_ts = (row['Traded_DT'] + pd.Timedelta(days=lookahead_days)).timestamp() - base_time
+            resolution_t.append(int(resolution_ts))
+            
+        print(f"Skipped {skipped} transactions.")
+        
+        num_classes = len(target_cols) + 1
+        
+        data = TemporalData(
+            src=torch.tensor(src, dtype=torch.long),
+            dst=torch.tensor(dst, dtype=torch.long),
+            t=torch.tensor(t, dtype=torch.long),
+            msg=torch.tensor(msg, dtype=torch.float), 
+            y=torch.tensor(y, dtype=torch.long)
+        )
 
-            # --- DYNAMIC CLASS WEIGHTING ---
-            y_train = train_data.y.long() # Use full train data for weights (prevents UnboundLocalError)
-            y_train = y_train[y_train >= 0]
-            class_counts = torch.bincount(y_train, minlength=num_classes).float()
-            weights = 1.0 / (class_counts + 1.0)
-            weights = weights * (num_classes / weights.sum())
-            print(f"  Class Counts: {class_counts.tolist()} -> Weights: {weights.tolist()}")
-            
-            criterion = torch.nn.CrossEntropyLoss(weight=weights.to(device))
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-            neighbor_loader = LastNeighborLoader(num_nodes, size=10, device=device)
-            
-            # 3. PHASE 1: TRAIN WITH VALIDATION
-            train_size = int(len(train_data.src) * 0.9)
-            actual_train_data = train_data[:train_size]
-            val_data = train_data[train_size:]
-            
-            train_loader = TemporalDataLoader(actual_train_data, batch_size=200)
-            val_loader = TemporalDataLoader(val_data, batch_size=200)
-            
-            print(f"  Train Split: {len(actual_train_data.src)} | Val Split: {len(val_data.src)}")
-            
-            best_val_f1 = 0.0
-            epochs_without_improvement = 0
-            best_epoch = 1 # Default to 1 if no improvement ever
-            
-            for epoch in range(1, max_epochs + 1):
-                model.memory.reset_state()
-                neighbor_loader.reset_state()
-                model.memory.detach()
-                model.train()
-                
-                epoch_loss = 0
-                batch_count = 0
-                
-                # A. Train
-                for batch in train_loader:
-                    if batch.src.size(0) <= 1: continue
-                    batch = batch.to(device)
-                    optimizer.zero_grad()
-                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                    price_emb = model.get_price_embedding(price_seq)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1)
-                    
-                    n_id = torch.cat([src, dst]).unique()
-                    n_id, edge_index, e_id = neighbor_loader(n_id)
-                    assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
-                    edge_attr = get_edge_attr(n_id, edge_index, e_id, t)
-                    
-                    z = model(n_id, edge_index, edge_attr)
-                    z_src = z[[assoc[i] for i in src.tolist()]]
-                    z_dst = z[[assoc[i] for i in dst.tolist()]]
-                    s_src = model.encode_static(data.x_static[src])
-                    s_dst = model.encode_static(data.x_static[dst])
-                    
-                    logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(logits, batch.y.long())
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                    optimizer.step()
-                    
-                    epoch_loss += loss.item()
-                    batch_count += 1
-                    
-                    model.memory.update_state(src, dst, t, augmented_msg)
-                    neighbor_loader.insert(src, dst)
-                    model.memory.detach()
-                
-                # B. Gap
-                gap_loader = TemporalDataLoader(gap_data, batch_size=200)
-                model.eval()
-                for batch in gap_loader:
-                    batch = batch.to(device)
-                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                    price_emb = model.get_price_embedding(price_seq)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1)
-                    model.memory.update_state(src, dst, t, augmented_msg)
-                    neighbor_loader.insert(src, dst)
-
-                # C. Validation
-                val_preds_binary = []
-                val_targets_binary = []
-                
-                for batch in val_loader:
-                    batch = batch.to(device)
-                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                    price_emb = model.get_price_embedding(price_seq)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1)
-                    
-                    n_id = torch.cat([src, dst]).unique()
-                    n_id, edge_index, e_id = neighbor_loader(n_id)
-                    assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
-                    edge_attr = get_edge_attr(n_id, edge_index, e_id, t)
-
-                    z = model(n_id, edge_index, edge_attr)
-                    z_src = z[[assoc[i] for i in src.tolist()]]
-                    z_dst = z[[assoc[i] for i in dst.tolist()]]
-                    s_src = model.encode_static(data.x_static[src])
-                    s_dst = model.encode_static(data.x_static[dst])
-                    
-                    with torch.no_grad():
-                        logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                        pred_cls = logits.argmax(dim=1)
-                        pred_bin = decode_to_binary(pred_cls, num_classes-1)
-                        
-                        y_clean = batch.y.clone()
-                        y_clean[y_clean < 0] = 0 
-                        target_bin = decode_to_binary(y_clean, num_classes-1)
-                        
-                        valid_mask = (batch.y >= 0).cpu().numpy()
-                        if valid_mask.any():
-                            val_preds_binary.append(pred_bin[valid_mask].cpu())
-                            val_targets_binary.append(target_bin[valid_mask].cpu())
-                    
-                    model.memory.update_state(src, dst, t, augmented_msg)
-                    neighbor_loader.insert(src, dst)
-                
-                if len(val_targets_binary) > 0:
-                    val_t = torch.cat(val_targets_binary).numpy()
-                    val_p = torch.cat(val_preds_binary).numpy()
-                    val_f1 = f1_score(val_t, val_p, average='weighted')
-                else:
-                    val_f1 = 0.0
-                    
-                avg_loss = epoch_loss / batch_count if batch_count > 0 else 0
-                print(f"  Epoch {epoch}/{max_epochs}: Loss={avg_loss:.4f} | Val F1 (Binary)={val_f1:.4f}")
-                
-                if val_f1 > best_val_f1:
-                    best_val_f1 = val_f1
-                    epochs_without_improvement = 0
-                    best_epoch = epoch
-                else:
-                    epochs_without_improvement += 1
-                    # --- MODIFIED: Ensure minimum epochs are run ---
-                    if epochs_without_improvement >= patience and epoch >= min_epochs:
-                        print(f"  Early Stop at epoch {epoch} (Best: {best_epoch})")
-                        break
-            
-            # 4. PHASE 2: RETRAIN ON FULL DATA
-            # If best_epoch was found before min_epochs (e.g., best was 2, current is 10), 
-            # we generally want to respect the BEST epoch found.
-            # If the model didn't improve at all, best_epoch defaults to 1.
-            print(f"  --- Phase 2: Retraining on FULL data for {best_epoch} epochs ---")
-            
-            model = TGN(
-                num_nodes=num_nodes, 
-                raw_msg_dim=msg_dim, 
-                memory_dim=100, 
-                time_dim=TIME_DIM, 
-                embedding_dim=NODE_EMBEDDING_DIM,
-                num_parties=num_parties, 
-                num_states=num_states,
-                num_classes=num_classes 
-            ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-            neighbor_loader.reset_state()
-            
-            full_train_loader = TemporalDataLoader(train_data, batch_size=200)
-            
-            for epoch in range(1, best_epoch + 1):
-                model.memory.reset_state()
-                neighbor_loader.reset_state()
-                model.memory.detach()
-                model.train()
-                
-                for batch in full_train_loader:
-                    batch = batch.to(device)
-                    optimizer.zero_grad()
-                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                    price_emb = model.get_price_embedding(price_seq)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1)
-                    
-                    n_id = torch.cat([src, dst]).unique()
-                    n_id, edge_index, e_id = neighbor_loader(n_id)
-                    assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
-                    edge_attr = get_edge_attr(n_id, edge_index, e_id, t)
-                    
-                    z = model(n_id, edge_index, edge_attr)
-                    z_src = z[[assoc[i] for i in src.tolist()]]
-                    z_dst = z[[assoc[i] for i in dst.tolist()]]
-                    s_src = model.encode_static(data.x_static[src])
-                    s_dst = model.encode_static(data.x_static[dst])
-                    
-                    logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(logits, batch.y.long())
-                    loss.backward()
-                    optimizer.step()
-                    
-                    model.memory.update_state(src, dst, t, augmented_msg)
-                    neighbor_loader.insert(src, dst)
-                    model.memory.detach()
-                
-                # Gap Loop (Update memory for gap period)
-                gap_loader = TemporalDataLoader(gap_data, batch_size=200)
-                model.eval()
-                for batch in gap_loader:
-                    batch = batch.to(device)
-                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                    price_emb = model.get_price_embedding(price_seq)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1)
-                    model.memory.update_state(src, dst, t, augmented_msg)
-                    neighbor_loader.insert(src, dst)
-            
-            # 5. TEST PHASE
-            print(f"  Testing model...")
-            model.eval()
-            test_loader = TemporalDataLoader(test_data, batch_size=200)
-            preds_binary_all = []
-            targets_binary_all = []
-            
-            for batch in test_loader:
-                batch = batch.to(device)
-                src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                
-                price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), price_dim), device=device)
-                price_emb = model.get_price_embedding(price_seq)
-                augmented_msg = torch.cat([msg, price_emb], dim=1)
-                
-                n_id = torch.cat([src, dst]).unique()
-                n_id, edge_index, e_id = neighbor_loader(n_id)
-                assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
-                edge_attr = get_edge_attr(n_id, edge_index, e_id, t)
-
-                z = model(n_id, edge_index, edge_attr)
-                z_src = z[[assoc[i] for i in src.tolist()]]
-                z_dst = z[[assoc[i] for i in dst.tolist()]]
-                s_src = model.encode_static(data.x_static[src])
-                s_dst = model.encode_static(data.x_static[dst])
-                
-                with torch.no_grad():
-                    logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    pred_cls = logits.argmax(dim=1)
-                    pred_bin = decode_to_binary(pred_cls, num_classes-1)
-                    
-                    y_clean = batch.y.clone()
-                    y_clean[y_clean < 0] = 0
-                    target_bin = decode_to_binary(y_clean, num_classes-1)
-                    
-                    valid_mask = (batch.y >= 0).cpu().numpy()
-                    if valid_mask.any():
-                        preds_binary_all.append(pred_bin[valid_mask].cpu())
-                        targets_binary_all.append(target_bin[valid_mask].cpu())
-                
-                model.memory.update_state(src, dst, t, augmented_msg)
-                neighbor_loader.insert(src, dst)
-                
-            if len(targets_binary_all) > 0:
-                final_t = torch.cat(targets_binary_all).numpy()
-                final_p = torch.cat(preds_binary_all).numpy()
-                acc = accuracy_score(final_t, final_p)
-                f1 = f1_score(final_t, final_p, average='weighted')
-                count = len(final_p)
-                
-                print(f"  [RESULT] {year}-{month:02d}: BinarySubsetAcc={acc:.4f} | WeightedF1={f1:.4f} | Count={count}")
-                print("-" * 50)
-                print(classification_report(final_t, final_p, zero_division=0, target_names=target_names))
-                
-                results.append({
-                    "Year": year,
-                    "Month": month,
-                    "Accuracy": acc,
-                    "F1": f1,
-                    "Count": count
-                })
-                
-                df_results = pd.DataFrame(results)
-                os.makedirs(RESULTS_DIR, exist_ok=True)
-                df_results.to_csv(os.path.join(RESULTS_DIR, "rolling_binary_metrics.csv"), index=False)
-            else:
-                print("  [RESULT] No valid test samples.")
+        data.msg_feature_names = feature_names 
+        data.msg_dim = len(feature_names)       
+        data.price_dim = 14                     
+        
+        if price_seqs: data.price_seq = torch.stack(price_seqs)
+        else: data.price_seq = torch.zeros((len(src), 14))
+        
+        data.resolution_t = torch.tensor(resolution_t, dtype=torch.long)
+        data.num_nodes = total_nodes
+        data.x_static = x_static
+        data.num_parties = len(self.party_map)
+        data.num_states = len(self.state_map)
+        data.num_classes = num_classes
+        
+        # --- UPDATE: Store specific counts for later printing ---
+        data.num_pols = num_pols
+        data.num_comps = num_comps
+        
+        return data
 
 if __name__ == "__main__":
-    os.makedirs(LOGS_DIR, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = os.path.join(LOGS_DIR, f"multilabel_binary_{timestamp}.txt")
-    sys.stdout = Logger(log_path)
-    print(f"Starting script... Output is being saved to: {log_path}")
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--years", nargs="+", type=int, default=TARGET_YEARS, help="Years to train on")
-    args = parser.parse_args()
-
-    data_path = os.path.join(PROCESSED_DATA_DIR, "temporal_data.pt")
-    if os.path.exists(data_path):
-        print(f"Loading data from {data_path}...")
-        data = torch.load(data_path, weights_only=False)
-    else:
-        print(f"ERROR: Data file not found at {data_path}")
-        sys.exit(1)
-
-    if hasattr(data, 'msg_dim'):
-        msg_dim = int(data.msg_dim) 
-        del data.msg_dim            
-    else:
-        msg_dim = data.msg.shape[1]
-
-    if hasattr(data, 'price_dim'):
-        price_dim = int(data.price_dim)
-        del data.price_dim          
-    else:
-        if hasattr(data, 'price_seq'):
-             price_dim = data.price_seq.shape[1]
-        else:
-             price_dim = 14 
+    df = pd.read_csv(CONFIG['TX_PATH'])
+    builder = TemporalGraphBuilder(df, CONFIG)
+    data = builder.process()
     
-    if hasattr(data, 'msg_feature_names'):
-        del data.msg_feature_names 
-
-    print(f"Detected Dynamic Dimensions -> Msg: {msg_dim} | Price: {price_dim}")
-
-    if data.y.min() < 0:
-        bad_count = (data.y < 0).sum().item()
-        print(f"Sanitizing Data: Found {bad_count} invalid targets. Mapping to -100 (ignore_index).")
-        data.y[data.y < 0] = -100
-
-    if hasattr(data, 'num_classes'):
-        num_classes = int(data.num_classes)
-        del data.num_classes
-    else:
-        from src.config_multiple_binary_labels import TARGET_COLUMNS
-        num_classes = len(TARGET_COLUMNS) + 1
+    print("\n" + "="*40)
+    print("       GRAPH CONSTRUCTION SUMMARY")
+    print("="*40)
+    print(f"Total Nodes:      {data.num_nodes}")
+    print(f"  - Congress:     {data.num_pols}")
+    print(f"  - Companies:    {data.num_comps}")
+    print(f"Total Edges (Tx): {data.src.shape[0]}")
+    print(f"Message Dim:      {data.msg.shape[1]}") 
+    print(f"Classes:          {data.num_classes}")
+    print("="*40 + "\n")
         
-    if hasattr(data, 'num_nodes'):
-        num_nodes = int(data.num_nodes)
-        del data.num_nodes
-    else: 
-        num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
-
-    if hasattr(data, 'num_parties'):
-        num_parties = int(data.num_parties)
-        del data.num_parties
-    else: 
-        num_parties = 5
-
-    if hasattr(data, 'num_states'):
-        num_states = int(data.num_states)
-        del data.num_states
-    else: 
-        num_states = 60
-
-    print(f"Model will train on {num_classes} intervals (Decoding to {num_classes-1} binary labels).")
-
-    print("Loading CSV for Date Alignment...")
-    df = pd.read_csv(TX_PATH)
-    df['Traded'] = pd.to_datetime(df['Traded'])
-    df = df.sort_values('Traded').reset_index(drop=True)
-    
-    ticker_counts = df['Ticker'].value_counts()
-    valid_tickers = ticker_counts[ticker_counts >= MIN_TICKER_FREQ].index
-    mask = df['Ticker'].isin(valid_tickers) & df['Traded'].notna()
-    df = df[mask].reset_index(drop=True)
-    
-    print(f"Aligned DF Size: {len(df)} | PyG Data Size: {data.num_events}")
-    
-    train_and_evaluate(data, df, num_nodes, num_parties, num_states, num_classes, 
-                       msg_dim, price_dim, 
-                       target_names=TARGET_COLUMNS,
-                       target_years=args.years)
-    
-    print("Experiment completed. Results saved to logs.")
+    os.makedirs("data", exist_ok=True)
+    torch.save(data, "data/temporal_data.pt")

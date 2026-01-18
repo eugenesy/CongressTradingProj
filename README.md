@@ -18,10 +18,11 @@ This repository contains the implementation of a Temporal Graph Network (TGN) fo
 
 ### 0. Data Preparation (Required for all)
 **Download Data**:
-Please request access and download the required datasets (`ml_dataset_reduced_attributes.csv`, `all_tickers_historical_data.pkl`) from this [Google Drive Link](https://drive.google.com/drive/folders/1ku1EeknWuz5h3PVxHtRhYs6Rd-GuHxfa?usp=share_link).
+Please download **all four zip files** from this [Google Drive Link](https://drive.google.com/drive/folders/1NoA9RH53IeafKRcF0i7N78fUO47Np-F8?usp=sharing).
 
 **Setup**:
-Place the downloaded files into `data/raw/` inside the project directory.
+1.  Unzip all four downloaded files.
+2.  Place the contents (specifically the three data folders/files) into `data/raw/` inside the project directory.
 
 **Generate Base Labels**:
 Before running any specific workflow, you must generate the multiclass labels. This is the prerequisite for all use cases below:

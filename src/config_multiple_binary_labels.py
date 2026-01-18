@@ -32,7 +32,7 @@ FINANCIALS_PATH = os.path.join(RAW_DATA_DIR, FINANCIALS_FILENAME)
 
 # 1. Label Selection
 
-TARGET_YEARS = [2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024]
+TARGET_YEARS = [2022, 2023]
 # Pick one: '1W', '2W', '1M', '2M', '3M', '4M', '5M', '6M', '7M', '8M', 
 # '9M', '10M', '11M', '12M', '14M', '16M', 18M', '20M', '22M', '24M'
 LABEL_TIMEFRAME = '12M'
@@ -56,12 +56,12 @@ _THRESHOLD_MAP = {
     '10M': ([-52, -39, -26, -13], [0, 13, 26, 39, 52]),
     '11M': ([-56, -42, -28, -14], [0, 14, 28, 42, 56]),
     # '12M': ([-60, -45, -30, -15], [0, 15, 30, 45, 60]), # Renamed from 1Y
-    '14M': ([-68, -51, -34, -17], [0, 17, 34, 51, 68]),
-    '16M': ([-76, -57, -38, -19], [0, 19, 38, 57, 76]),
-    '18M': ([-84, -63, -42, -21], [0, 21, 42, 63, 84]),
-    '20M': ([-92, -69, -46, -23], [0, 23, 46, 69, 92]),
-    '22M': ([-100, -75, -50, -25], [0, 25, 50, 75, 100]),
-    '24M': ([-108, -81, -54, -27], [0, 27, 54, 81, 108]),
+    '14M': ([-68, -51, -34, -17], [0, 1, 34, 51, 68]),
+    '16M': ([-76, -57, -38, -19], [0, 17, 34, 51, 68]),
+    '18M': ([-72, -54, -36, -18],[0, 18, 36, 54, 72]),
+    '20M': ([-76, -57, -38, -19], [0, 19, 38, 57, 76]),
+    '22M': ([-80, -60, -40, -20], [0, 20, 40, 60, 80]),
+    '24M': ([-84, -63, -42, -21], [0, 21, 42, 63, 84]),
     '12M': ([-15], [15]),
 }
 
@@ -111,10 +111,10 @@ MIN_TICKER_FREQ = 5
 
 # 4. Feature Flags
 INCLUDE_IDEOLOGY = True      # Set to False to exclude ideology scores
-INCLUDE_DISTRICT_ECON = True # Set to False to exclude district economic data
+INCLUDE_DISTRICT_ECON = False # Set to False to exclude district economic data
 INCLUDE_COMMITTEES = True
 INCLUDE_COMPANY_SIC = True
-INCLUDE_COMPANY_FINANCIALS = True
+INCLUDE_COMPANY_FINANCIALS = False
 
 # Outputs
 RESULTS_DIR = os.path.join(PROJECT_ROOT, "results", LABEL_TIMEFRAME)
