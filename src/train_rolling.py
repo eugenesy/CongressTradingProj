@@ -95,7 +95,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             actual_train_data = train_data[train_split_idx]
             val_data = train_data[val_split_idx]
             
-            train_loader = TemporalDataLoader(actual_train_data, batch_size=200)
+            train_loader = TemporalDataLoader(actual_train_data, batch_size=200, drop_last=True)
             val_loader = TemporalDataLoader(val_data, batch_size=200)
             
             print(f"  Train Split: {len(actual_train_data.src)} | Val Split: {len(val_data.src)}")
@@ -388,7 +388,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             neighbor_loader = LastNeighborLoader(num_nodes, size=10, device=device)
             
             # Use FULL train_data (not split)
-            full_train_loader = TemporalDataLoader(train_data, batch_size=200)
+            full_train_loader = TemporalDataLoader(train_data, batch_size=200, drop_last=True)
             
             for epoch in range(1, best_epoch + 1):
                 model.memory.reset_state()
