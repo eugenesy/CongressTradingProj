@@ -76,9 +76,9 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             logger.info(f"\n=== RETRAINING For Window: {year}-{month:02d} | Mode: {ablation_mode} ===")
             
             # 1. Split Indices
-            train_mask = df_filtered['Traded'] < gap_start
-            gap_mask = (df_filtered['Traded'] >= gap_start) & (df_filtered['Traded'] < gap_end)
-            test_mask = (df_filtered['Traded'] >= current_period_start) & (df_filtered['Traded'] < next_period_start)
+            train_mask = df_filtered['Filed'] < gap_start
+            gap_mask = (df_filtered['Filed'] >= gap_start) & (df_filtered['Filed'] < gap_end)
+            test_mask = (df_filtered['Filed'] >= current_period_start) & (df_filtered['Filed'] < next_period_start)
             
             train_idx = np.where(train_mask)[0]
             gap_idx = np.where(gap_mask)[0]
@@ -521,13 +521,17 @@ if __name__ == "__main__":
     from src.config import TX_PATH
     raw_df = pd.read_csv(TX_PATH)
     raw_df['Traded'] = pd.to_datetime(raw_df['Traded'])
-    raw_df = raw_df.sort_values('Traded').reset_index(drop=True)
+    raw_df['Filed'] = pd.to_datetime(raw_df['Filed'])
+    
+    # Sort by Filed to align with temporal_data.py
+    raw_df = raw_df.sort_values('Filed').reset_index(drop=True)
     
     # Filter
     ticker_counts = raw_df['Ticker'].value_counts()
     valid_tickers = ticker_counts[ticker_counts >= 5].index
     valid_set = set(valid_tickers)
-    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Traded'].notnull()
+    # Also filtered missing 'Filed'
+    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Filed'].notnull()
     df_filtered = raw_df[mask].reset_index(drop=True)
     
     # Config
