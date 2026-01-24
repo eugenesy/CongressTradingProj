@@ -13,7 +13,8 @@ class TemporalGraphBuilder:
         """
         Builds a TemporalData object from transactions.
         """
-        self.transactions = transactions_df.sort_values('Traded').reset_index(drop=True)
+        # Sort by Filed Date
+        self.transactions = transactions_df.sort_values('Filed').reset_index(drop=True)
         self.min_freq = min_freq
         
         # Mappings
@@ -95,7 +96,8 @@ class TemporalGraphBuilder:
         
         # Base Timestamp (for normalization)
         if len(self.transactions) > 0:
-            base_time = pd.to_datetime(self.transactions['Traded'].min()).timestamp()
+            # Use Filed date for base time
+            base_time = pd.to_datetime(self.transactions['Filed'].min()).timestamp()
         else:
             base_time = 0
             
@@ -130,9 +132,11 @@ class TemporalGraphBuilder:
             dst.append(c_idx)
             
             # Time (Seconds since start)
-            if pd.isna(row['Traded_DT']):
+            # Use Filed Date as the event time
+            if pd.isna(row['Filed_DT']):
+                skipped += 1
                 continue
-            ts = row['Traded_DT'].timestamp() - base_time
+            ts = row['Filed_DT'].timestamp() - base_time
             t.append(int(ts))
             
             # --- Edge Features ---
@@ -144,7 +148,8 @@ class TemporalGraphBuilder:
             is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
             
             # 3. Filing Gap (Days)
-            if pd.notnull(row['Filed_DT']):
+            # Gap is still Filed - Traded
+            if pd.notnull(row['Filed_DT']) and pd.notnull(row['Traded_DT']):
                 gap_days = (row['Filed_DT'] - row['Traded_DT']).days
                 gap_days = max(0, gap_days)
             else:

@@ -48,9 +48,9 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             # Gap:   >= Gap Start & < Test Start (Edges exist, Labels unknown)
             # Test:  >= Test Start & < Test End
             
-            train_mask = df_filtered['Traded'] < gap_start
-            gap_mask = (df_filtered['Traded'] >= gap_start) & (df_filtered['Traded'] < gap_end)
-            test_mask = (df_filtered['Traded'] >= current_period_start) & (df_filtered['Traded'] < next_period_start)
+            train_mask = df_filtered['Filed'] < gap_start
+            gap_mask = (df_filtered['Filed'] >= gap_start) & (df_filtered['Filed'] < gap_end)
+            test_mask = (df_filtered['Filed'] >= current_period_start) & (df_filtered['Filed'] < next_period_start)
             
             train_idx = np.where(train_mask)[0]
             gap_idx = np.where(gap_mask)[0]
@@ -641,7 +641,10 @@ if __name__ == "__main__":
     from src.config import TX_PATH
     raw_df = pd.read_csv(TX_PATH)
     raw_df['Traded'] = pd.to_datetime(raw_df['Traded'])
-    raw_df = raw_df.sort_values('Traded').reset_index(drop=True)
+    raw_df['Filed'] = pd.to_datetime(raw_df['Filed'])
+    
+    # Sort by Filed to align with temporal_data.py
+    raw_df = raw_df.sort_values('Filed').reset_index(drop=True)
     
     # Filter
     # Need to match strictly.
@@ -653,9 +656,9 @@ if __name__ == "__main__":
     valid_tickers = ticker_counts[ticker_counts >= 5].index
     valid_set = set(valid_tickers)
     
-    # Also filtered missing 'Traded'
+    # Also filtered missing 'Filed' (used for sorting/time)
     
-    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Traded'].notnull()
+    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Filed'].notnull()
     df_filtered = raw_df[mask].reset_index(drop=True)
     
     print(f"Filtered DF Size: {len(df_filtered)} | Data Size: {len(data.src)}")
