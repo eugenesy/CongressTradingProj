@@ -100,6 +100,32 @@ Run unit tests:
 pytest tests/ -v
 ```
 
+### End-to-End Pipeline Test
+
+**Option 1: Quick test (assumes data already exists)**
+```bash
+bash scripts/test_pipeline.sh
+```
+Tests: Temporal graph building → Ablation study (full-only, 1M, α=0.0)
+
+**Option 2: Full test (includes dataset building - takes hours)**
+```bash
+bash scripts/test_full_pipeline.sh
+```
+Tests: Dataset building → Temporal graph → Ablation study
+
+**For tmux:**
+```bash
+# Start a tmux session
+tmux new -s chocolate_test
+
+# Run the test
+bash scripts/test_pipeline.sh
+
+# Detach: Ctrl+B, then D
+# Reattach: tmux attach -t chocolate_test
+```
+
 ## Results & Metrics
 *   **Standard Report**: `report_{mode}_{year}_{month}.json`
 *   **Directional Report**: `report_{mode}_{year}_{month}_directional.json` (Interprets "Sell" success as "Stock Up").
