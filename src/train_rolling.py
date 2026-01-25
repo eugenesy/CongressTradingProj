@@ -96,7 +96,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             val_data = train_data[val_split_idx]
             
             train_loader = TemporalDataLoader(actual_train_data, batch_size=200, drop_last=True)
-            val_loader = TemporalDataLoader(val_data, batch_size=200)
+            val_loader = TemporalDataLoader(val_data, batch_size=200, drop_last=True)
             
             print(f"  Train Split: {len(actual_train_data.src)} | Val Split: {len(val_data.src)}")
             
@@ -108,7 +108,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             epoch_val_f1s = []  # Per-epoch validation F1
             all_batch_losses = []  # Per-batch loss across ALL epochs
             
-            best_val_f1 = 0.0
+            min_val_loss = float('inf')
             epochs_without_improvement = 0
             best_model_state = None
             best_epoch = None  # Track which epoch had best validation
@@ -288,6 +288,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 model.eval()
                 val_preds = []
                 val_targets = []
+                val_losses = []
                 
                 # Need to build memory up to validation point first
                 # Actually, validation data is part of training history, just held out
@@ -339,7 +340,11 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                         s_dst = model.encode_static(data.x_static[dst])
                         
                         with torch.no_grad():
-                            p = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).sigmoid().cpu().numpy()
+                            pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
+                            loss = criterion(pred_logits, batch.y)
+                            val_losses.append(loss.item())
+                            
+                            p = pred_logits.sigmoid().cpu().numpy()
                             val_preds.extend(p.flatten())
                             val_targets.extend(batch.y.cpu().numpy())
                     
@@ -352,18 +357,20 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     val_f1 = f1_score(val_targets, np.array(val_preds) > 0.5)
                 epoch_val_f1s.append(val_f1)
                 
-                print(f"  Epoch {epoch}/{max_epochs}: Loss={avg_loss:.4f} | Train F1={train_f1:.4f} | Val F1={val_f1:.4f}")
+                avg_val_loss = np.mean(val_losses) if val_losses else 0.0
                 
-                # Early Stopping Check
-                if val_f1 > best_val_f1:
-                    best_val_f1 = val_f1
+                print(f"  Epoch {epoch}/{max_epochs}: Loss={avg_loss:.4f} | Train F1={train_f1:.4f} | Val Loss={avg_val_loss:.4f} | Val F1={val_f1:.4f}")
+                
+                # Early Stopping Check (Loss > F1)
+                if avg_val_loss < min_val_loss:
+                    min_val_loss = avg_val_loss
                     epochs_without_improvement = 0
                     best_model_state = model.state_dict().copy()
                     best_epoch = epoch  # Track which epoch was best
                 else:
                     epochs_without_improvement += 1
                     if epochs_without_improvement >= patience:
-                        print(f"  Phase 1 Early Stop at epoch {epoch} (best Val F1: {best_val_f1:.4f})")
+                        print(f"  Phase 1 Early Stop at epoch {epoch} (best Val Loss: {min_val_loss:.4f})")
                         break
                 
                 model.train()  # Switch back for next epoch

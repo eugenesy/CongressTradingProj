@@ -119,11 +119,11 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             val_data = train_data[val_split_idx]
             
             train_loader = TemporalDataLoader(actual_train_data, batch_size=200, drop_last=True)
-            val_loader = TemporalDataLoader(val_data, batch_size=200)
+            val_loader = TemporalDataLoader(val_data, batch_size=200, drop_last=True)
             
             model.train()
             
-            best_val_f1 = 0.0
+            min_val_loss = float('inf')
             epochs_without_improvement = 0
             best_epoch = None
             
@@ -236,6 +236,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 # C. Validation
                 val_preds = []
                 val_targets = []
+                val_losses = []
                 for batch in val_loader:
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
@@ -289,7 +290,11 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                             s_dst = torch.zeros_like(s_dst)
                         
                         with torch.no_grad():
-                            p = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).sigmoid().cpu().numpy()
+                            pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
+                            loss = criterion(pred_logits, batch.y)
+                            val_losses.append(loss.item())
+                            
+                            p = pred_logits.sigmoid().cpu().numpy()
                             val_preds.extend(p.flatten())
                             val_targets.extend(batch.y.cpu().numpy())
                     
@@ -297,18 +302,19 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     neighbor_loader.insert(src, dst)
                 
                 avg_loss = np.mean(epoch_losses) if epoch_losses else 0
+                avg_val_loss = np.mean(val_losses) if val_losses else 0
                 val_f1 = f1_score(val_targets, np.array(val_preds) > 0.5) if val_targets else 0
                 
-                logger.debug(f"  Ep {epoch}: Loss={avg_loss:.4f} | Val F1={val_f1:.4f}")
+                logger.debug(f"  Ep {epoch}: Loss={avg_loss:.4f} | Val Loss={avg_val_loss:.4f} | Val F1={val_f1:.4f}")
                 
-                if val_f1 > best_val_f1:
-                    best_val_f1 = val_f1
+                if avg_val_loss < min_val_loss:
+                    min_val_loss = avg_val_loss
                     epochs_without_improvement = 0
                     best_epoch = epoch
                 else:
                     epochs_without_improvement += 1
                     if epochs_without_improvement >= patience:
-                        logger.info(f"  Early Stop at ep {epoch} (best: {best_val_f1:.4f})")
+                        logger.info(f"  Early Stop at ep {epoch} (best Val Loss: {min_val_loss:.4f})")
                         break
                 
                 model.train()
