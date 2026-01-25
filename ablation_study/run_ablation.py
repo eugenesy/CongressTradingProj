@@ -575,7 +575,7 @@ if __name__ == "__main__":
     
     # Filter
     ticker_counts = raw_df['Ticker'].value_counts()
-    valid_tickers = ticker_counts[ticker_counts >= 5].index
+    valid_tickers = ticker_counts[ticker_counts >= 1].index
     valid_set = set(valid_tickers)
     # Also filtered missing 'Filed'
     mask = raw_df['Ticker'].isin(valid_set) & raw_df['Filed'].notnull()

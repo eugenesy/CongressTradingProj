@@ -683,7 +683,7 @@ if __name__ == "__main__":
     # 2. Map was built on min_freq=5
     
     ticker_counts = raw_df['Ticker'].value_counts()
-    valid_tickers = ticker_counts[ticker_counts >= 5].index
+    valid_tickers = ticker_counts[ticker_counts >= 1].index
     valid_set = set(valid_tickers)
     
     # Also filtered missing 'Filed' (used for sorting/time)

@@ -9,7 +9,7 @@ import pickle
 from collections import defaultdict
 
 class TemporalGraphBuilder:
-    def __init__(self, transactions_df, min_freq=5):
+    def __init__(self, transactions_df, min_freq=1):
         """
         Builds a TemporalData object from transactions.
         """
@@ -60,7 +60,7 @@ class TemporalGraphBuilder:
         except:
             return 0.0
 
-    def process(self):
+    def process(self, min_freq=1):
         src = []
         dst = []
         t = []
