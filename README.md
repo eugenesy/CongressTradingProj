@@ -4,55 +4,43 @@ This repository contains the implementation of a Temporal Graph Network (TGN) fo
 
 ## Directory Structure
 
-*   `src/`: Source code for models, data processing, and training.
-*   `data/`: Data storage (temporal_data.pt, price_sequences.pt).
-*   `results/`: Training metrics, learning curves, and evaluation JSONs.
-*   `logs/`: Execution logs.
-*   `docs/`: Methodological documentation and experiment logs.
-    *   [`EXPERIMENT_LOG.md`](docs/EXPERIMENT_LOG.md): Detailed history of Experiments 001-013.
-    *   [`TGN_EXPLAINER.md`](docs/TGN_EXPLAINER.md): Technical explanation of the model architecture.
-*   `presentations/`: LaTeX source for project presentations.
-*   [`FUTURE_WORK.md`](FUTURE_WORK.md): **Start Here for Next Steps** (Baseline Plan, To-Dos).
+*   `scripts/`: Executable entry points (`run_rolling.py`, `run_ablation.py`).
+*   `src/`: Core library code (`temporal_data.py`, `models_tgn.py`, `config.py`).
+*   `data/`: Data storage (`temporal_data.pt`, `price_sequences.pt`).
+*   `results/`: Training metrics and evaluation JSON reports.
+*   `docs/`: Methodological documentation.
+*   `FUTURE_WORK.md`: Roadmap and Next Steps.
 
 ## Quick Start
-
-### 1. Data Preparation
-**Download Data**:
-Please request access and download the required datasets (`ml_dataset_reduced_attributes.csv`, `all_tickers_historical_data.pkl`) from this [Google Drive Link](https://drive.google.com/drive/folders/1ku1EeknWuz5h3PVxHtRhYs6Rd-GuHxfa?usp=share_link).
-
-**Setup**:
-Place the downloaded files into `data/raw/` inside the project directory.
-
-**Build Graph**:
-To build the temporal graph dataset from the raw files:
+### 1. Build Graph
 ```bash
 python src/temporal_data.py
+# Generates data/temporal_data.pt (using Filed Date)
 ```
-This reads the source CSV and generates `data/temporal_data.pt`.
 
-### 2. Training (Development/Demo)
-To run a quick 1-year evaluation (Default: 2023):
+### 2. Rolling Window Evaluation
+Run a standard rolling evaluation (default 1M horizon):
 ```bash
-python src/train_rolling.py
+python scripts/run_rolling.py --horizon 1M --alpha 0.0
 ```
-This script runs the rolling window process for a shorter period, useful for code verification.
 
-### 3. Reproducing Presentation Results (Full Ablation Study)
-To reproduce the full 6-year study (2019-2024) presented in the LaTeX slides:
+### 3. Ablation Study
+Run the full ablation study (Politician vs Market Signal) or targeted experiments:
+
+**New: Targeted Experiment (Full Model Only)**
 ```bash
-./ablation_study/run_full_experiment.sh
+python scripts/run_ablation.py --full-only --horizon 6M --alpha 0.05
+# Results saved to: results/experiments/H_6M_A_0.05/
 ```
-This script:
-*   Runs 3 model configurations (Politician Only, Market Only, Full Model).
-*   Evaluates over 72 months (2019-2024).
-*   Saves consolidated results to `results/ablation_monthly_breakdown.csv`.
 
-## Handover & Next Steps
+**Full 3-Way Ablation (2019-2024)**
+```bash
+python scripts/run_ablation.py --full-run
+```
 
-Please refer to **[`FUTURE_WORK.md`](FUTURE_WORK.md)** for a detailed list of next steps, including:
-1.  **Baseline Model Implementation** (Priority for teammate).
-2.  Technical Paper drafting.
-3.  Planned Graph Enhancements (Social Graph, etc.).
+## Results & Metrics
+*   **Standard Report**: `report_{mode}_{year}_{month}.json`
+*   **Directional Report**: `report_{mode}_{year}_{month}_directional.json` (Interprets "Sell" success as "Stock Up").
 
 ## Requirements
 *   Python 3.8+

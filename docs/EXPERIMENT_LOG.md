@@ -429,3 +429,23 @@ Conclusion:
   - **Improvement**: Macro-F1 (0.569) is better than Exp 003 (0.550) and Exp 004 (0.523).
   - **Verdict**: This configuration (Two-Phase + MeanAggregator + Unweighted BCE) is the stable baseline for Phase 2.
 ```
+
+---
+
+### Experiment 014: Date Logic Fix & Refined Ablation (Filed Date)
+**Date**: 2026-01-25
+**Changes**:
+- **Date Basis**: Switched ALL logic from `Traded` date to `Filed` date.
+  - **Reason**: To strictly prevent look-ahead bias. The model now only sees data available on the public filing date.
+- **Refactoring**:
+  - Moved scripts to `scripts/`.
+  - Added `--full-only` flag to skip baseline ablations.
+  - Dynamic result folders: `results/experiments/H_{horizon}_A_{alpha}/`.
+  - JSON Reports: Renamed suffix `_flipped` to `_directional` for clarity.
+**Config**:
+- Same as Exp 013 but with `Filed` date basis.
+**Verification**:
+- Scripts execute correctly.
+- Directory structure created as expected.
+- Directional reports generated.
+

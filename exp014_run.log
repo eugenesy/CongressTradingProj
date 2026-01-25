@@ -1,0 +1,557 @@
+Loading CSV for Date Alignment...
+Filtered DF Size: 29414 | Data Size: 29414
+
+=== RETRAINING For Window: 2023-01 ===
+Train: 22659 | Gap: 140 | Test: 331
+  Train Split: 20393 | Val Split: 2266
+  Epoch 1/20: Loss=0.0869 | Train F1=0.4851 | Val F1=0.1413
+  Epoch 2/20: Loss=0.0865 | Train F1=0.4473 | Val F1=0.1287
+  Epoch 3/20: Loss=0.0863 | Train F1=0.4446 | Val F1=0.1562
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4852 | Val F1=0.1789
+  Epoch 5/20: Loss=0.0860 | Train F1=0.4906 | Val F1=0.2654
+  Epoch 6/20: Loss=0.0858 | Train F1=0.4985 | Val F1=0.3256
+  Epoch 7/20: Loss=0.0856 | Train F1=0.5166 | Val F1=0.3434
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5134 | Val F1=0.3883
+  Epoch 9/20: Loss=0.0852 | Train F1=0.5245 | Val F1=0.3588
+  Epoch 10/20: Loss=0.0851 | Train F1=0.5220 | Val F1=0.3700
+  Epoch 11/20: Loss=0.0849 | Train F1=0.5209 | Val F1=0.3925
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5295 | Val F1=0.4258
+  Epoch 13/20: Loss=0.0846 | Train F1=0.5330 | Val F1=0.4044
+  Epoch 14/20: Loss=0.0844 | Train F1=0.5337 | Val F1=0.4007
+  Epoch 15/20: Loss=0.0845 | Train F1=0.5310 | Val F1=0.4521
+  Epoch 16/20: Loss=0.0843 | Train F1=0.5279 | Val F1=0.4297
+  Epoch 17/20: Loss=0.0842 | Train F1=0.5347 | Val F1=0.3700
+  Epoch 18/20: Loss=0.0843 | Train F1=0.5354 | Val F1=0.3971
+  Epoch 19/20: Loss=0.0841 | Train F1=0.5399 | Val F1=0.4161
+  Epoch 20/20: Loss=0.0839 | Train F1=0.5407 | Val F1=0.4214
+  Phase 1 Early Stop at epoch 20 (best Val F1: 0.4521)
+
+  --- Phase 2: Retraining on FULL data for 15 epochs ---
+    Phase 2 Epoch 1/15: Avg Loss = 0.0868
+    Phase 2 Epoch 2/15: Avg Loss = 0.0864
+    Phase 2 Epoch 3/15: Avg Loss = 0.0863
+    Phase 2 Epoch 4/15: Avg Loss = 0.0862
+    Phase 2 Epoch 5/15: Avg Loss = 0.0859
+    Phase 2 Epoch 6/15: Avg Loss = 0.0858
+    Phase 2 Epoch 7/15: Avg Loss = 0.0856
+    Phase 2 Epoch 8/15: Avg Loss = 0.0854
+    Phase 2 Epoch 9/15: Avg Loss = 0.0853
+    Phase 2 Epoch 10/15: Avg Loss = 0.0850
+    Phase 2 Epoch 11/15: Avg Loss = 0.0848
+    Phase 2 Epoch 12/15: Avg Loss = 0.0850
+    Phase 2 Epoch 13/15: Avg Loss = 0.0847
+    Phase 2 Epoch 14/15: Avg Loss = 0.0848
+    Phase 2 Epoch 15/15: Avg Loss = 0.0846
+  Phase 2 Complete: Model trained on full data for 15 epochs
+  [RESULT] 2023-01: ROC-AUC=0.5868 | PR-AUC=0.6684 | ACC=0.5106 | F1=0.4671 | Macro-F1=0.5073 | Count=331
+
+--- Classification Report for 2023-01 ---
+              precision    recall  f1-score   support
+
+        Loss       0.45      0.69      0.55       142
+         Win       0.62      0.38      0.47       189
+
+    accuracy                           0.51       331
+   macro avg       0.54      0.53      0.51       331
+weighted avg       0.55      0.51      0.50       331
+
+
+=== RETRAINING For Window: 2023-02 ===
+Train: 22799 | Gap: 331 | Test: 230
+  Train Split: 20519 | Val Split: 2280
+  Epoch 1/20: Loss=0.0868 | Train F1=0.3756 | Val F1=0.0226
+  Epoch 2/20: Loss=0.0865 | Train F1=0.4306 | Val F1=0.0407
+  Epoch 3/20: Loss=0.0864 | Train F1=0.4373 | Val F1=0.0389
+  Epoch 4/20: Loss=0.0863 | Train F1=0.4537 | Val F1=0.0354
+  Epoch 5/20: Loss=0.0862 | Train F1=0.4460 | Val F1=0.0391
+  Epoch 6/20: Loss=0.0858 | Train F1=0.4824 | Val F1=0.0317
+  Epoch 7/20: Loss=0.0857 | Train F1=0.4826 | Val F1=0.0245
+  Phase 1 Early Stop at epoch 7 (best Val F1: 0.0407)
+
+  --- Phase 2: Retraining on FULL data for 2 epochs ---
+    Phase 2 Epoch 1/2: Avg Loss = 0.0868
+    Phase 2 Epoch 2/2: Avg Loss = 0.0864
+  Phase 2 Complete: Model trained on full data for 2 epochs
+  [RESULT] 2023-02: ROC-AUC=0.4577 | PR-AUC=0.4323 | ACC=0.4478 | F1=0.3351 | Macro-F1=0.4315 | Count=230
+
+--- Classification Report for 2023-02 ---
+              precision    recall  f1-score   support
+
+        Loss       0.49      0.58      0.53       123
+         Win       0.38      0.30      0.34       107
+
+    accuracy                           0.45       230
+   macro avg       0.43      0.44      0.43       230
+weighted avg       0.44      0.45      0.44       230
+
+
+=== RETRAINING For Window: 2023-03 ===
+Train: 23130 | Gap: 230 | Test: 342
+  Train Split: 20817 | Val Split: 2313
+  Epoch 1/20: Loss=0.0868 | Train F1=0.4384 | Val F1=0.2103
+  Epoch 2/20: Loss=0.0865 | Train F1=0.4236 | Val F1=0.1180
+  Epoch 3/20: Loss=0.0863 | Train F1=0.4251 | Val F1=0.0974
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4501 | Val F1=0.1158
+  Epoch 5/20: Loss=0.0860 | Train F1=0.4578 | Val F1=0.1678
+  Epoch 6/20: Loss=0.0858 | Train F1=0.4754 | Val F1=0.1864
+  Phase 1 Early Stop at epoch 6 (best Val F1: 0.2103)
+
+  --- Phase 2: Retraining on FULL data for 1 epochs ---
+    Phase 2 Epoch 1/1: Avg Loss = 0.0868
+  Phase 2 Complete: Model trained on full data for 1 epochs
+  [RESULT] 2023-03: ROC-AUC=0.5328 | PR-AUC=0.5735 | ACC=0.5175 | F1=0.5404 | Macro-F1=0.5163 | Count=342
+
+--- Classification Report for 2023-03 ---
+              precision    recall  f1-score   support
+
+        Loss       0.48      0.50      0.49       159
+         Win       0.55      0.53      0.54       183
+
+    accuracy                           0.52       342
+   macro avg       0.52      0.52      0.52       342
+weighted avg       0.52      0.52      0.52       342
+
+
+=== RETRAINING For Window: 2023-04 ===
+Train: 23360 | Gap: 342 | Test: 370
+  Train Split: 21024 | Val Split: 2336
+  Epoch 1/20: Loss=0.0872 | Train F1=0.5100 | Val F1=0.0526
+  Epoch 2/20: Loss=0.0865 | Train F1=0.5071 | Val F1=0.0457
+  Epoch 3/20: Loss=0.0862 | Train F1=0.5041 | Val F1=0.0559
+  Epoch 4/20: Loss=0.0859 | Train F1=0.5129 | Val F1=0.0641
+  Epoch 5/20: Loss=0.0858 | Train F1=0.5215 | Val F1=0.0626
+  Epoch 6/20: Loss=0.0856 | Train F1=0.5254 | Val F1=0.0659
+  Epoch 7/20: Loss=0.0854 | Train F1=0.5400 | Val F1=0.0691
+  Epoch 8/20: Loss=0.0852 | Train F1=0.5391 | Val F1=0.0710
+  Epoch 9/20: Loss=0.0851 | Train F1=0.5466 | Val F1=0.0659
+  Epoch 10/20: Loss=0.0850 | Train F1=0.5528 | Val F1=0.0675
+  Epoch 11/20: Loss=0.0848 | Train F1=0.5547 | Val F1=0.0641
+  Epoch 12/20: Loss=0.0848 | Train F1=0.5510 | Val F1=0.0691
+  Epoch 13/20: Loss=0.0845 | Train F1=0.5602 | Val F1=0.0608
+  Phase 1 Early Stop at epoch 13 (best Val F1: 0.0710)
+
+  --- Phase 2: Retraining on FULL data for 8 epochs ---
+    Phase 2 Epoch 1/8: Avg Loss = 0.0868
+    Phase 2 Epoch 2/8: Avg Loss = 0.0865
+    Phase 2 Epoch 3/8: Avg Loss = 0.0863
+    Phase 2 Epoch 4/8: Avg Loss = 0.0862
+    Phase 2 Epoch 5/8: Avg Loss = 0.0860
+    Phase 2 Epoch 6/8: Avg Loss = 0.0857
+    Phase 2 Epoch 7/8: Avg Loss = 0.0855
+    Phase 2 Epoch 8/8: Avg Loss = 0.0854
+  Phase 2 Complete: Model trained on full data for 8 epochs
+  [RESULT] 2023-04: ROC-AUC=0.4793 | PR-AUC=0.5160 | ACC=0.4892 | F1=0.5714 | Macro-F1=0.4697 | Count=370
+
+--- Classification Report for 2023-04 ---
+              precision    recall  f1-score   support
+
+        Loss       0.44      0.32      0.37       173
+         Win       0.52      0.64      0.57       197
+
+    accuracy                           0.49       370
+   macro avg       0.48      0.48      0.47       370
+weighted avg       0.48      0.49      0.48       370
+
+
+=== RETRAINING For Window: 2023-05 ===
+Train: 23702 | Gap: 370 | Test: 224
+  Train Split: 21331 | Val Split: 2371
+  Epoch 1/20: Loss=0.0869 | Train F1=0.4434 | Val F1=0.0071
+  Epoch 2/20: Loss=0.0865 | Train F1=0.4696 | Val F1=0.0088
+  Epoch 3/20: Loss=0.0864 | Train F1=0.4545 | Val F1=0.0018
+  Epoch 4/20: Loss=0.0861 | Train F1=0.4761 | Val F1=0.0036
+  Epoch 5/20: Loss=0.0860 | Train F1=0.4778 | Val F1=0.0141
+  Epoch 6/20: Loss=0.0857 | Train F1=0.4933 | Val F1=0.0193
+  Epoch 7/20: Loss=0.0855 | Train F1=0.5055 | Val F1=0.0227
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5027 | Val F1=0.0123
+  Epoch 9/20: Loss=0.0853 | Train F1=0.5154 | Val F1=0.0245
+  Epoch 10/20: Loss=0.0853 | Train F1=0.5152 | Val F1=0.0329
+  Epoch 11/20: Loss=0.0849 | Train F1=0.5220 | Val F1=0.0227
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5241 | Val F1=0.0226
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5197 | Val F1=0.0345
+  Epoch 14/20: Loss=0.0848 | Train F1=0.5213 | Val F1=0.0395
+  Epoch 15/20: Loss=0.0846 | Train F1=0.5308 | Val F1=0.0327
+  Epoch 16/20: Loss=0.0842 | Train F1=0.5349 | Val F1=0.0394
+  Epoch 17/20: Loss=0.0842 | Train F1=0.5347 | Val F1=0.0293
+  Epoch 18/20: Loss=0.0841 | Train F1=0.5381 | Val F1=0.0327
+  Epoch 19/20: Loss=0.0842 | Train F1=0.5393 | Val F1=0.0260
+  Phase 1 Early Stop at epoch 19 (best Val F1: 0.0395)
+
+  --- Phase 2: Retraining on FULL data for 14 epochs ---
+    Phase 2 Epoch 1/14: Avg Loss = 0.0869
+    Phase 2 Epoch 2/14: Avg Loss = 0.0865
+    Phase 2 Epoch 3/14: Avg Loss = 0.0863
+    Phase 2 Epoch 4/14: Avg Loss = 0.0862
+    Phase 2 Epoch 5/14: Avg Loss = 0.0859
+    Phase 2 Epoch 6/14: Avg Loss = 0.0859
+    Phase 2 Epoch 7/14: Avg Loss = 0.0856
+    Phase 2 Epoch 8/14: Avg Loss = 0.0855
+    Phase 2 Epoch 9/14: Avg Loss = 0.0853
+    Phase 2 Epoch 10/14: Avg Loss = 0.0852
+    Phase 2 Epoch 11/14: Avg Loss = 0.0851
+    Phase 2 Epoch 12/14: Avg Loss = 0.0847
+    Phase 2 Epoch 13/14: Avg Loss = 0.0848
+    Phase 2 Epoch 14/14: Avg Loss = 0.0847
+  Phase 2 Complete: Model trained on full data for 14 epochs
+  [RESULT] 2023-05: ROC-AUC=0.7929 | PR-AUC=0.8477 | ACC=0.7679 | F1=0.8255 | Macro-F1=0.7394 | Count=224
+
+--- Classification Report for 2023-05 ---
+              precision    recall  f1-score   support
+
+        Loss       0.73      0.59      0.65        83
+         Win       0.78      0.87      0.83       141
+
+    accuracy                           0.77       224
+   macro avg       0.76      0.73      0.74       224
+weighted avg       0.76      0.77      0.76       224
+
+
+=== RETRAINING For Window: 2023-06 ===
+Train: 24072 | Gap: 224 | Test: 182
+  Train Split: 21664 | Val Split: 2408
+  Epoch 1/20: Loss=0.0865 | Train F1=0.4002 | Val F1=0.2059
+  Epoch 2/20: Loss=0.0864 | Train F1=0.4243 | Val F1=0.1770
+  Epoch 3/20: Loss=0.0862 | Train F1=0.4399 | Val F1=0.2133
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4497 | Val F1=0.2403
+  Epoch 5/20: Loss=0.0858 | Train F1=0.4664 | Val F1=0.2107
+  Epoch 6/20: Loss=0.0856 | Train F1=0.4815 | Val F1=0.2687
+  Epoch 7/20: Loss=0.0856 | Train F1=0.4886 | Val F1=0.2517
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5010 | Val F1=0.2731
+  Epoch 9/20: Loss=0.0854 | Train F1=0.5010 | Val F1=0.2703
+  Epoch 10/20: Loss=0.0853 | Train F1=0.4978 | Val F1=0.2770
+  Epoch 11/20: Loss=0.0850 | Train F1=0.5068 | Val F1=0.2513
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5144 | Val F1=0.2896
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5162 | Val F1=0.2708
+  Epoch 14/20: Loss=0.0846 | Train F1=0.5207 | Val F1=0.2845
+  Epoch 15/20: Loss=0.0846 | Train F1=0.5208 | Val F1=0.2938
+  Epoch 16/20: Loss=0.0844 | Train F1=0.5221 | Val F1=0.2812
+  Epoch 17/20: Loss=0.0844 | Train F1=0.5211 | Val F1=0.3038
+  Epoch 18/20: Loss=0.0843 | Train F1=0.5217 | Val F1=0.3582
+  Epoch 19/20: Loss=0.0842 | Train F1=0.5334 | Val F1=0.3688
+  Epoch 20/20: Loss=0.0842 | Train F1=0.5326 | Val F1=0.3657
+
+  --- Phase 2: Retraining on FULL data for 19 epochs ---
+    Phase 2 Epoch 1/19: Avg Loss = 0.0867
+    Phase 2 Epoch 2/19: Avg Loss = 0.0864
+    Phase 2 Epoch 3/19: Avg Loss = 0.0862
+    Phase 2 Epoch 4/19: Avg Loss = 0.0859
+    Phase 2 Epoch 5/19: Avg Loss = 0.0857
+    Phase 2 Epoch 6/19: Avg Loss = 0.0857
+    Phase 2 Epoch 7/19: Avg Loss = 0.0855
+    Phase 2 Epoch 8/19: Avg Loss = 0.0854
+    Phase 2 Epoch 9/19: Avg Loss = 0.0853
+    Phase 2 Epoch 10/19: Avg Loss = 0.0851
+    Phase 2 Epoch 11/19: Avg Loss = 0.0850
+    Phase 2 Epoch 12/19: Avg Loss = 0.0849
+    Phase 2 Epoch 13/19: Avg Loss = 0.0846
+    Phase 2 Epoch 14/19: Avg Loss = 0.0849
+    Phase 2 Epoch 15/19: Avg Loss = 0.0846
+    Phase 2 Epoch 16/19: Avg Loss = 0.0844
+    Phase 2 Epoch 17/19: Avg Loss = 0.0844
+    Phase 2 Epoch 18/19: Avg Loss = 0.0843
+    Phase 2 Epoch 19/19: Avg Loss = 0.0843
+  Phase 2 Complete: Model trained on full data for 19 epochs
+  [RESULT] 2023-06: ROC-AUC=0.5996 | PR-AUC=0.5771 | ACC=0.5604 | F1=0.5652 | Macro-F1=0.5604 | Count=182
+
+--- Classification Report for 2023-06 ---
+              precision    recall  f1-score   support
+
+        Loss       0.54      0.57      0.56        88
+         Win       0.58      0.55      0.57        94
+
+    accuracy                           0.56       182
+   macro avg       0.56      0.56      0.56       182
+weighted avg       0.56      0.56      0.56       182
+
+
+=== RETRAINING For Window: 2023-07 ===
+Train: 24296 | Gap: 182 | Test: 376
+  Train Split: 21866 | Val Split: 2430
+  Epoch 1/20: Loss=0.0867 | Train F1=0.4669 | Val F1=0.4718
+  Epoch 2/20: Loss=0.0864 | Train F1=0.4604 | Val F1=0.4413
+  Epoch 3/20: Loss=0.0863 | Train F1=0.4749 | Val F1=0.4878
+  Epoch 4/20: Loss=0.0860 | Train F1=0.4794 | Val F1=0.4744
+  Epoch 5/20: Loss=0.0859 | Train F1=0.4950 | Val F1=0.5056
+  Epoch 6/20: Loss=0.0859 | Train F1=0.4990 | Val F1=0.5120
+  Epoch 7/20: Loss=0.0856 | Train F1=0.5099 | Val F1=0.5474
+  Epoch 8/20: Loss=0.0856 | Train F1=0.5073 | Val F1=0.5382
+  Epoch 9/20: Loss=0.0853 | Train F1=0.5243 | Val F1=0.5445
+  Epoch 10/20: Loss=0.0852 | Train F1=0.5367 | Val F1=0.5609
+  Epoch 11/20: Loss=0.0850 | Train F1=0.5342 | Val F1=0.5562
+  Epoch 12/20: Loss=0.0848 | Train F1=0.5447 | Val F1=0.5668
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5455 | Val F1=0.5545
+  Epoch 14/20: Loss=0.0849 | Train F1=0.5493 | Val F1=0.5745
+  Epoch 15/20: Loss=0.0846 | Train F1=0.5452 | Val F1=0.5874
+  Epoch 16/20: Loss=0.0846 | Train F1=0.5423 | Val F1=0.5691
+  Epoch 17/20: Loss=0.0842 | Train F1=0.5519 | Val F1=0.5595
+  Epoch 18/20: Loss=0.0844 | Train F1=0.5548 | Val F1=0.5695
+  Epoch 19/20: Loss=0.0840 | Train F1=0.5545 | Val F1=0.5740
+  Epoch 20/20: Loss=0.0841 | Train F1=0.5538 | Val F1=0.5518
+  Phase 1 Early Stop at epoch 20 (best Val F1: 0.5874)
+
+  --- Phase 2: Retraining on FULL data for 15 epochs ---
+    Phase 2 Epoch 1/15: Avg Loss = 0.0867
+    Phase 2 Epoch 2/15: Avg Loss = 0.0863
+    Phase 2 Epoch 3/15: Avg Loss = 0.0863
+    Phase 2 Epoch 4/15: Avg Loss = 0.0860
+    Phase 2 Epoch 5/15: Avg Loss = 0.0858
+    Phase 2 Epoch 6/15: Avg Loss = 0.0857
+    Phase 2 Epoch 7/15: Avg Loss = 0.0856
+    Phase 2 Epoch 8/15: Avg Loss = 0.0855
+    Phase 2 Epoch 9/15: Avg Loss = 0.0853
+    Phase 2 Epoch 10/15: Avg Loss = 0.0852
+    Phase 2 Epoch 11/15: Avg Loss = 0.0851
+    Phase 2 Epoch 12/15: Avg Loss = 0.0849
+    Phase 2 Epoch 13/15: Avg Loss = 0.0849
+    Phase 2 Epoch 14/15: Avg Loss = 0.0849
+    Phase 2 Epoch 15/15: Avg Loss = 0.0847
+  Phase 2 Complete: Model trained on full data for 15 epochs
+  [RESULT] 2023-07: ROC-AUC=0.6311 | PR-AUC=0.7782 | ACC=0.7553 | F1=0.8487 | Macro-F1=0.6049 | Count=376
+
+--- Classification Report for 2023-07 ---
+              precision    recall  f1-score   support
+
+        Loss       0.72      0.24      0.36       108
+         Win       0.76      0.96      0.85       268
+
+    accuracy                           0.76       376
+   macro avg       0.74      0.60      0.60       376
+weighted avg       0.75      0.76      0.71       376
+
+
+=== RETRAINING For Window: 2023-08 ===
+Train: 24478 | Gap: 376 | Test: 177
+  Train Split: 22030 | Val Split: 2448
+  Epoch 1/20: Loss=0.0871 | Train F1=0.4907 | Val F1=0.0031
+  Epoch 2/20: Loss=0.0867 | Train F1=0.4519 | Val F1=0.0093
+  Epoch 3/20: Loss=0.0865 | Train F1=0.4485 | Val F1=0.0093
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4621 | Val F1=0.0108
+  Epoch 5/20: Loss=0.0859 | Train F1=0.4722 | Val F1=0.0184
+  Epoch 6/20: Loss=0.0858 | Train F1=0.4845 | Val F1=0.0318
+  Epoch 7/20: Loss=0.0855 | Train F1=0.4986 | Val F1=0.0273
+  Epoch 8/20: Loss=0.0853 | Train F1=0.5076 | Val F1=0.0259
+  Epoch 9/20: Loss=0.0852 | Train F1=0.5108 | Val F1=0.0390
+  Epoch 10/20: Loss=0.0851 | Train F1=0.5186 | Val F1=0.0391
+  Epoch 11/20: Loss=0.0849 | Train F1=0.5226 | Val F1=0.0288
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5203 | Val F1=0.0361
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5358 | Val F1=0.0317
+  Epoch 14/20: Loss=0.0846 | Train F1=0.5320 | Val F1=0.0362
+  Epoch 15/20: Loss=0.0845 | Train F1=0.5345 | Val F1=0.0348
+  Phase 1 Early Stop at epoch 15 (best Val F1: 0.0391)
+
+  --- Phase 2: Retraining on FULL data for 10 epochs ---
+    Phase 2 Epoch 1/10: Avg Loss = 0.0870
+    Phase 2 Epoch 2/10: Avg Loss = 0.0866
+    Phase 2 Epoch 3/10: Avg Loss = 0.0865
+    Phase 2 Epoch 4/10: Avg Loss = 0.0862
+    Phase 2 Epoch 5/10: Avg Loss = 0.0860
+    Phase 2 Epoch 6/10: Avg Loss = 0.0860
+    Phase 2 Epoch 7/10: Avg Loss = 0.0857
+    Phase 2 Epoch 8/10: Avg Loss = 0.0856
+    Phase 2 Epoch 9/10: Avg Loss = 0.0853
+    Phase 2 Epoch 10/10: Avg Loss = 0.0852
+  Phase 2 Complete: Model trained on full data for 10 epochs
+  [RESULT] 2023-08: ROC-AUC=0.4736 | PR-AUC=0.5495 | ACC=0.4972 | F1=0.5700 | Macro-F1=0.4823 | Count=177
+
+--- Classification Report for 2023-08 ---
+              precision    recall  f1-score   support
+
+        Loss       0.40      0.39      0.39        75
+         Win       0.56      0.58      0.57       102
+
+    accuracy                           0.50       177
+   macro avg       0.48      0.48      0.48       177
+weighted avg       0.49      0.50      0.50       177
+
+
+=== RETRAINING For Window: 2023-09 ===
+Train: 24854 | Gap: 177 | Test: 446
+  Train Split: 22368 | Val Split: 2486
+  Epoch 1/20: Loss=0.0872 | Train F1=0.5030 | Val F1=0.3947
+  Epoch 2/20: Loss=0.0867 | Train F1=0.4674 | Val F1=0.2730
+  Epoch 3/20: Loss=0.0864 | Train F1=0.4622 | Val F1=0.3377
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4792 | Val F1=0.4578
+  Epoch 5/20: Loss=0.0859 | Train F1=0.4817 | Val F1=0.4690
+  Epoch 6/20: Loss=0.0858 | Train F1=0.5080 | Val F1=0.5505
+  Epoch 7/20: Loss=0.0856 | Train F1=0.5037 | Val F1=0.5160
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5199 | Val F1=0.5876
+  Epoch 9/20: Loss=0.0851 | Train F1=0.5302 | Val F1=0.5066
+  Epoch 10/20: Loss=0.0851 | Train F1=0.5232 | Val F1=0.5364
+  Epoch 11/20: Loss=0.0850 | Train F1=0.5381 | Val F1=0.5375
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5270 | Val F1=0.5532
+  Epoch 13/20: Loss=0.0849 | Train F1=0.5298 | Val F1=0.4924
+  Phase 1 Early Stop at epoch 13 (best Val F1: 0.5876)
+
+  --- Phase 2: Retraining on FULL data for 8 epochs ---
+    Phase 2 Epoch 1/8: Avg Loss = 0.0867
+    Phase 2 Epoch 2/8: Avg Loss = 0.0865
+    Phase 2 Epoch 3/8: Avg Loss = 0.0862
+    Phase 2 Epoch 4/8: Avg Loss = 0.0861
+    Phase 2 Epoch 5/8: Avg Loss = 0.0859
+    Phase 2 Epoch 6/8: Avg Loss = 0.0857
+    Phase 2 Epoch 7/8: Avg Loss = 0.0854
+    Phase 2 Epoch 8/8: Avg Loss = 0.0852
+  Phase 2 Complete: Model trained on full data for 8 epochs
+  [RESULT] 2023-09: ROC-AUC=0.4968 | PR-AUC=0.4627 | ACC=0.5493 | F1=0.6455 | Macro-F1=0.5135 | Count=446
+
+--- Classification Report for 2023-09 ---
+              precision    recall  f1-score   support
+
+        Loss       0.61      0.28      0.38       224
+         Win       0.53      0.82      0.65       222
+
+    accuracy                           0.55       446
+   macro avg       0.57      0.55      0.51       446
+weighted avg       0.57      0.55      0.51       446
+
+
+=== RETRAINING For Window: 2023-10 ===
+Train: 25031 | Gap: 446 | Test: 287
+  Train Split: 22527 | Val Split: 2504
+  Epoch 1/20: Loss=0.0872 | Train F1=0.5588 | Val F1=0.0126
+  Epoch 2/20: Loss=0.0865 | Train F1=0.4659 | Val F1=0.0140
+  Epoch 3/20: Loss=0.0863 | Train F1=0.4702 | Val F1=0.0126
+  Epoch 4/20: Loss=0.0862 | Train F1=0.4731 | Val F1=0.0140
+  Epoch 5/20: Loss=0.0859 | Train F1=0.4901 | Val F1=0.0154
+  Epoch 6/20: Loss=0.0858 | Train F1=0.5058 | Val F1=0.0250
+  Epoch 7/20: Loss=0.0855 | Train F1=0.5079 | Val F1=0.0236
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5178 | Val F1=0.0452
+  Epoch 9/20: Loss=0.0853 | Train F1=0.5236 | Val F1=0.0346
+  Epoch 10/20: Loss=0.0850 | Train F1=0.5337 | Val F1=0.0236
+  Epoch 11/20: Loss=0.0850 | Train F1=0.5318 | Val F1=0.0317
+  Epoch 12/20: Loss=0.0846 | Train F1=0.5395 | Val F1=0.0277
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5391 | Val F1=0.0236
+  Phase 1 Early Stop at epoch 13 (best Val F1: 0.0452)
+
+  --- Phase 2: Retraining on FULL data for 8 epochs ---
+    Phase 2 Epoch 1/8: Avg Loss = 0.0868
+    Phase 2 Epoch 2/8: Avg Loss = 0.0864
+    Phase 2 Epoch 3/8: Avg Loss = 0.0862
+    Phase 2 Epoch 4/8: Avg Loss = 0.0860
+    Phase 2 Epoch 5/8: Avg Loss = 0.0857
+    Phase 2 Epoch 6/8: Avg Loss = 0.0855
+    Phase 2 Epoch 7/8: Avg Loss = 0.0853
+    Phase 2 Epoch 8/8: Avg Loss = 0.0851
+  Phase 2 Complete: Model trained on full data for 8 epochs
+  [RESULT] 2023-10: ROC-AUC=0.7522 | PR-AUC=0.7561 | ACC=0.6969 | F1=0.7493 | Macro-F1=0.6830 | Count=287
+
+--- Classification Report for 2023-10 ---
+              precision    recall  f1-score   support
+
+        Loss       0.69      0.56      0.62       125
+         Win       0.70      0.80      0.75       162
+
+    accuracy                           0.70       287
+   macro avg       0.69      0.68      0.68       287
+weighted avg       0.70      0.70      0.69       287
+
+
+=== RETRAINING For Window: 2023-11 ===
+Train: 25477 | Gap: 287 | Test: 199
+  Train Split: 22929 | Val Split: 2548
+  Epoch 1/20: Loss=0.0871 | Train F1=0.5009 | Val F1=0.0782
+  Epoch 2/20: Loss=0.0866 | Train F1=0.4611 | Val F1=0.1038
+  Epoch 3/20: Loss=0.0863 | Train F1=0.4701 | Val F1=0.0554
+  Epoch 4/20: Loss=0.0861 | Train F1=0.4766 | Val F1=0.1183
+  Epoch 5/20: Loss=0.0860 | Train F1=0.4896 | Val F1=0.0979
+  Epoch 6/20: Loss=0.0858 | Train F1=0.5012 | Val F1=0.1556
+  Epoch 7/20: Loss=0.0854 | Train F1=0.5165 | Val F1=0.1284
+  Epoch 8/20: Loss=0.0854 | Train F1=0.5230 | Val F1=0.0899
+  Epoch 9/20: Loss=0.0851 | Train F1=0.5220 | Val F1=0.1460
+  Epoch 10/20: Loss=0.0848 | Train F1=0.5355 | Val F1=0.1491
+  Epoch 11/20: Loss=0.0849 | Train F1=0.5376 | Val F1=0.1787
+  Epoch 12/20: Loss=0.0849 | Train F1=0.5388 | Val F1=0.1488
+  Epoch 13/20: Loss=0.0847 | Train F1=0.5348 | Val F1=0.1573
+  Epoch 14/20: Loss=0.0845 | Train F1=0.5408 | Val F1=0.1884
+  Epoch 15/20: Loss=0.0847 | Train F1=0.5436 | Val F1=0.2172
+  Epoch 16/20: Loss=0.0843 | Train F1=0.5460 | Val F1=0.1660
+  Epoch 17/20: Loss=0.0844 | Train F1=0.5511 | Val F1=0.1580
+  Epoch 18/20: Loss=0.0843 | Train F1=0.5451 | Val F1=0.1805
+  Epoch 19/20: Loss=0.0842 | Train F1=0.5444 | Val F1=0.1674
+  Epoch 20/20: Loss=0.0839 | Train F1=0.5561 | Val F1=0.1974
+  Phase 1 Early Stop at epoch 20 (best Val F1: 0.2172)
+
+  --- Phase 2: Retraining on FULL data for 15 epochs ---
+    Phase 2 Epoch 1/15: Avg Loss = 0.0869
+    Phase 2 Epoch 2/15: Avg Loss = 0.0865
+    Phase 2 Epoch 3/15: Avg Loss = 0.0863
+    Phase 2 Epoch 4/15: Avg Loss = 0.0861
+    Phase 2 Epoch 5/15: Avg Loss = 0.0860
+    Phase 2 Epoch 6/15: Avg Loss = 0.0857
+    Phase 2 Epoch 7/15: Avg Loss = 0.0855
+    Phase 2 Epoch 8/15: Avg Loss = 0.0853
+    Phase 2 Epoch 9/15: Avg Loss = 0.0852
+    Phase 2 Epoch 10/15: Avg Loss = 0.0848
+    Phase 2 Epoch 11/15: Avg Loss = 0.0849
+    Phase 2 Epoch 12/15: Avg Loss = 0.0848
+    Phase 2 Epoch 13/15: Avg Loss = 0.0846
+    Phase 2 Epoch 14/15: Avg Loss = 0.0845
+    Phase 2 Epoch 15/15: Avg Loss = 0.0845
+  Phase 2 Complete: Model trained on full data for 15 epochs
+  [RESULT] 2023-11: ROC-AUC=0.7434 | PR-AUC=0.6158 | ACC=0.7186 | F1=0.6056 | Macro-F1=0.6934 | Count=199
+
+--- Classification Report for 2023-11 ---
+              precision    recall  f1-score   support
+
+        Loss       0.80      0.76      0.78       131
+         Win       0.58      0.63      0.61        68
+
+    accuracy                           0.72       199
+   macro avg       0.69      0.70      0.69       199
+weighted avg       0.73      0.72      0.72       199
+
+
+=== RETRAINING For Window: 2023-12 ===
+Train: 25764 | Gap: 199 | Test: 299
+  Train Split: 23187 | Val Split: 2577
+  Epoch 1/20: Loss=0.0868 | Train F1=0.3738 | Val F1=0.1662
+  Epoch 2/20: Loss=0.0865 | Train F1=0.3902 | Val F1=0.2908
+  Epoch 3/20: Loss=0.0862 | Train F1=0.4250 | Val F1=0.4122
+  Epoch 4/20: Loss=0.0860 | Train F1=0.4508 | Val F1=0.4747
+  Epoch 5/20: Loss=0.0858 | Train F1=0.4740 | Val F1=0.4803
+  Epoch 6/20: Loss=0.0856 | Train F1=0.4795 | Val F1=0.4634
+  Epoch 7/20: Loss=0.0855 | Train F1=0.4939 | Val F1=0.4920
+  Epoch 8/20: Loss=0.0853 | Train F1=0.4944 | Val F1=0.5356
+  Epoch 9/20: Loss=0.0851 | Train F1=0.5147 | Val F1=0.5502
+  Epoch 10/20: Loss=0.0850 | Train F1=0.5164 | Val F1=0.5252
+  Epoch 11/20: Loss=0.0849 | Train F1=0.5171 | Val F1=0.5450
+  Epoch 12/20: Loss=0.0847 | Train F1=0.5196 | Val F1=0.5166
+  Epoch 13/20: Loss=0.0849 | Train F1=0.5207 | Val F1=0.5139
+  Epoch 14/20: Loss=0.0845 | Train F1=0.5246 | Val F1=0.5586
+  Epoch 15/20: Loss=0.0844 | Train F1=0.5259 | Val F1=0.4830
+  Epoch 16/20: Loss=0.0845 | Train F1=0.5307 | Val F1=0.5142
+  Epoch 17/20: Loss=0.0844 | Train F1=0.5330 | Val F1=0.5030
+  Epoch 18/20: Loss=0.0841 | Train F1=0.5269 | Val F1=0.5065
+  Epoch 19/20: Loss=0.0841 | Train F1=0.5383 | Val F1=0.5167
+  Phase 1 Early Stop at epoch 19 (best Val F1: 0.5586)
+
+  --- Phase 2: Retraining on FULL data for 14 epochs ---
+    Phase 2 Epoch 1/14: Avg Loss = 0.0866
+    Phase 2 Epoch 2/14: Avg Loss = 0.0861
+    Phase 2 Epoch 3/14: Avg Loss = 0.0860
+    Phase 2 Epoch 4/14: Avg Loss = 0.0858
+    Phase 2 Epoch 5/14: Avg Loss = 0.0857
+    Phase 2 Epoch 6/14: Avg Loss = 0.0853
+    Phase 2 Epoch 7/14: Avg Loss = 0.0852
+    Phase 2 Epoch 8/14: Avg Loss = 0.0852
+    Phase 2 Epoch 9/14: Avg Loss = 0.0848
+    Phase 2 Epoch 10/14: Avg Loss = 0.0849
+    Phase 2 Epoch 11/14: Avg Loss = 0.0846
+    Phase 2 Epoch 12/14: Avg Loss = 0.0848
+    Phase 2 Epoch 13/14: Avg Loss = 0.0846
+    Phase 2 Epoch 14/14: Avg Loss = 0.0845
+  Phase 2 Complete: Model trained on full data for 14 epochs
+  [RESULT] 2023-12: ROC-AUC=0.6667 | PR-AUC=0.7285 | ACC=0.6823 | F1=0.7836 | Macro-F1=0.5931 | Count=299
+
+--- Classification Report for 2023-12 ---
+              precision    recall  f1-score   support
+
+        Loss       0.64      0.29      0.40       109
+         Win       0.69      0.91      0.78       190
+
+    accuracy                           0.68       299
+   macro avg       0.67      0.60      0.59       299
+weighted avg       0.67      0.68      0.64       299
+
+Saved to results/rolling_tgn_retrain_metrics.csv
+

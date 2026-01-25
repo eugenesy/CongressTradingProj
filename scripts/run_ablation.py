@@ -13,10 +13,8 @@ import json
 sys.path.append(os.getcwd())
 
 # Import from local directory if possible, or standard path
-try:
-    from ablation_study.models_tgn import TGN
-except ImportError:
-    from src.models_tgn import TGN
+# Import from local directory if possible, or standard path
+from src.models_tgn import TGN
 
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
