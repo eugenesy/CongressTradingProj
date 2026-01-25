@@ -199,14 +199,14 @@ def compute_metrics(y_true, y_pred, y_prob):
     try:
         report['auc'] = float(roc_auc_score(y_true, y_prob))
     except:
-        report['auc'] = 0.5
+        report['auc'] = None
     
     # Add PR-AUC
     try:
         precision, recall, _ = precision_recall_curve(y_true, y_prob)
         report['pr_auc'] = float(auc(recall, precision))
     except:
-        report['pr_auc'] = 0.5
+        report['pr_auc'] = None
     
     return report
 
