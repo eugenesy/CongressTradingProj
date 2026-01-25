@@ -104,29 +104,7 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     
     df = df.dropna(subset=[er_col, 'Filed'])
     
-    # --- Win/Loss Label (Training Target) - TRANSACTION-AWARE ---
-    # Matching TGN logic exactly:
-    # - Buy: Win if excess_return > alpha (stock outperformed)
-    # - Sell: Win if excess_return < alpha (stock underperformed)
-    
-    df['Target_WinLoss'] = 0  # Initialize
-    
-    buy_mask = (df['Is_Buy'] == 1.0)
-    sell_mask = (df['Is_Buy'] == -1.0)
-    
-    # Buy wins if return > alpha
-    df.loc[buy_mask & (df[er_col] > alpha), 'Target_WinLoss'] = 1
-    
-    # Sell wins if return < alpha (stock went down relative to SPY)
-    df.loc[sell_mask & (df[er_col] < alpha), 'Target_WinLoss'] = 1
-    
-    # --- Directional Label (for Directional Reporting) ---
-    # This will be "flipped" for Sells during reporting (matching TGN)
-    # For now, just use the same as win/loss - we'll flip during evaluation
-    df['Target_Direction'] = df['Target_WinLoss'].copy()
-    df['Transaction_Type'] = df['Is_Buy'].copy()  # Store for flipping later
-    
-    # --- Features (Matching TGN exactly) ---
+    # --- Features (Create BEFORE using in labels) ---
     
     # 1. Parse Trade Size
     def parse_trade_size(val):
@@ -142,7 +120,7 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     df['Trade_Size_USD_Parsed'] = df['Trade_Size_USD'].apply(parse_trade_size)
     df['Log_Trade_Size'] = np.log1p(df['Trade_Size_USD_Parsed'])
     
-    # 2. Is Buy (-1 for Sell, +1 for Buy)
+    # 2. Is Buy (-1 for Sell, +1 for Buy) - CREATE THIS FIRST
     df['Is_Buy'] = df['Transaction'].astype(str).apply(
         lambda x: 1.0 if 'Purchase' in x.title() else (-1.0 if 'Sale' in x.title() else 0.0)
     )
@@ -157,6 +135,29 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     
     df['Gap_Days'] = df.apply(calc_gap, axis=1)
     df['Log_Gap'] = np.log1p(df['Gap_Days'])
+    
+    # --- NOW Create Labels (using Is_Buy) ---
+    # Win/Loss Label (Training Target) - TRANSACTION-AWARE
+    # Matching TGN logic exactly:
+    # - Buy: Win if excess_return > alpha (stock outperformed)
+    # - Sell: Win if excess_return < alpha (stock underperformed)
+    
+    df['Target_WinLoss'] = 0  # Initialize
+    
+    buy_mask = (df['Is_Buy'] == 1.0)
+    sell_mask = (df['Is_Buy'] == -1.0)
+    
+    # Buy wins if return > alpha
+    df.loc[buy_mask & (df[er_col] > alpha), 'Target_WinLoss'] = 1
+    
+    # Sell wins if return < alpha (stock went down relative to SPY)
+    df.loc[sell_mask & (df[er_col] < alpha), 'Target_WinLoss'] = 1
+    
+    # Directional Label (for Directional Reporting)
+    # This will be "flipped" for Sells during reporting (matching TGN)
+    # For now, just use the same as win/loss - we'll flip during evaluation
+    df['Target_Direction'] = df['Target_WinLoss'].copy()
+    df['Transaction_Type'] = df['Is_Buy'].copy()  # Store for flipping later
     
     # 4. Categoricals (One-Hot Encoded) - Match TGN static features
     for col in ['Party', 'State', 'BioGuideID', 'District']:
