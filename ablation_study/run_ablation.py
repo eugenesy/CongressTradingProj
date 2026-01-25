@@ -403,6 +403,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             test_loader = TemporalDataLoader(test_data, batch_size=200)
             preds = []
             targets = []
+            transaction_types = []
             
             for batch in test_loader:
                 batch = batch.to(device)
@@ -455,17 +456,26 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     y = batch.y.cpu().numpy()
                     preds.extend(p)
                     targets.extend(y)
+                    
+                    # Track Transaction Type (Buy=1, Sell=-1)
+                    # msg is [Batch, 3] -> (Amount, Is_Buy, Gap)
+                    is_buy_batch = msg[:, 1].cpu().numpy()
+                    transaction_types.extend(is_buy_batch)
                 
                 model.memory.update_state(src, dst, t, augmented_msg)
                 neighbor_loader.insert(src, dst)
             
             # Metrics
             try:
-                auc = roc_auc_score(targets, preds)
-                pr_auc = average_precision_score(targets, preds)
-                acc = accuracy_score(targets, np.array(preds) > 0.5)
-                f1 = f1_score(targets, np.array(preds) > 0.5)
-                macro_f1 = f1_score(targets, np.array(preds) > 0.5, average='macro')
+                preds_arr = np.array(preds)
+                targets_arr = np.array(targets)
+                trans_types_arr = np.array(transaction_types)
+                
+                auc = roc_auc_score(targets_arr, preds_arr)
+                pr_auc = average_precision_score(targets_arr, preds_arr)
+                acc = accuracy_score(targets_arr, preds_arr > 0.5)
+                f1 = f1_score(targets_arr, preds_arr > 0.5)
+                macro_f1 = f1_score(targets_arr, preds_arr > 0.5, average='macro')
                 count = len(preds)
                 
                 os.makedirs("results", exist_ok=True)
@@ -478,10 +488,25 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 logger.info(f"  [RESULT] Mode={ablation_mode} {year}-{month:02d}: AUC={auc:.4f} | F1={f1:.4f}")
                 
                 # Report
-                report = classification_report(targets, np.array(preds) > 0.5, output_dict=True)
+                report = classification_report(targets_arr, preds_arr > 0.5, output_dict=True)
                 os.makedirs("results/reports", exist_ok=True)
                 with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
                     json.dump(report, f, indent=4)
+                    
+                # --- ADJUSTED CLASSIFICATION REPORT (Flipped Sells) ---
+                sell_mask = (trans_types_arr == -1.0)
+                
+                targets_flipped = targets_arr.copy()
+                preds_flipped = preds_arr.copy()
+                
+                # Flip targets: 1 -> 0, 0 -> 1 for Sells
+                targets_flipped[sell_mask] = 1 - targets_flipped[sell_mask]
+                
+                # Flip predictions: p -> 1-p for Sells
+                preds_flipped[sell_mask] = 1 - preds_flipped[sell_mask]
+                
+                logger.info(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
+                logger.info("\n" + classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
                     
             except Exception as e:
                 logger.error(f"Error in metrics: {e}")

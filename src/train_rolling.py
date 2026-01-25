@@ -487,6 +487,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             
             preds = []
             targets = []
+            transaction_types = []
             
             for batch in test_loader:
                 batch = batch.to(device)
@@ -541,6 +542,11 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     y = batch.y.cpu().numpy()
                     preds.extend(p)
                     targets.extend(y)
+                    
+                    # Track Transaction Type (Buy=1, Sell=-1)
+                    # msg is [Batch, 3] -> (Amount, Is_Buy, Gap)
+                    is_buy_batch = msg[:, 1].cpu().numpy()
+                    transaction_types.extend(is_buy_batch)
                 
                 # Update memory for next batch *within* the month
                 model.memory.update_state(src, dst, t, augmented_msg)
@@ -548,11 +554,15 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
             
             # Metrics
             try:
-                auc = roc_auc_score(targets, preds)
-                pr_auc = average_precision_score(targets, preds)  # PR-AUC (better for imbalanced)
-                acc = accuracy_score(targets, np.array(preds) > 0.5)
-                f1 = f1_score(targets, np.array(preds) > 0.5)
-                macro_f1 = f1_score(targets, np.array(preds) > 0.5, average='macro')
+                preds_arr = np.array(preds)
+                targets_arr = np.array(targets)
+                trans_types_arr = np.array(transaction_types)
+                
+                auc = roc_auc_score(targets_arr, preds_arr)
+                pr_auc = average_precision_score(targets_arr, preds_arr)  # PR-AUC (better for imbalanced)
+                acc = accuracy_score(targets_arr, preds_arr > 0.5)
+                f1 = f1_score(targets_arr, preds_arr > 0.5)
+                macro_f1 = f1_score(targets_arr, preds_arr > 0.5, average='macro')
                 count = len(preds) # Define count here
                 
                 # Save Results to CSV
@@ -567,7 +577,27 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 # Classification Report
                 print(f"\n--- Classification Report for {year}-{month:02d} ---")
-                print(classification_report(targets, np.array(preds) > 0.5, target_names=['Loss', 'Win']))
+                print(classification_report(targets_arr, preds_arr > 0.5, target_names=['Loss', 'Win']))
+                
+                # --- ADJUSTED CLASSIFICATION REPORT (Flipped Sells) ---
+                # Logic: If Sell (-1), Label 1 means Trade Win (Stock Down). 
+                # We want Label 1 to mean Stock Up. 
+                # So for Sells: NewLabel = 1 - OldLabel. 
+                # And ProbStockUp = 1 - ProbTradeWin.
+                
+                sell_mask = (trans_types_arr == -1.0)
+                
+                targets_flipped = targets_arr.copy()
+                preds_flipped = preds_arr.copy()
+                
+                # Flip targets: 1 -> 0, 0 -> 1 for Sells
+                targets_flipped[sell_mask] = 1 - targets_flipped[sell_mask]
+                
+                # Flip predictions: p -> 1-p for Sells
+                preds_flipped[sell_mask] = 1 - preds_flipped[sell_mask]
+                
+                print(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
+                print(classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
                 
                 # Save Learning Curve for this month
                 os.makedirs("results/learning_curves", exist_ok=True)
