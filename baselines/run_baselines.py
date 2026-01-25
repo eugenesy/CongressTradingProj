@@ -53,48 +53,33 @@ HORIZON_DAYS = {
 
 
 def get_model(model_name: str):
-    """Return a model instance by name."""
+    """Return a model instance by name with vanilla default parameters."""
     models = {
         'xgboost': xgb.XGBClassifier(
-            objective='binary:logistic',
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            n_jobs=4,
             random_state=42,
-            eval_metric='logloss',
-            use_label_encoder=False
+            n_jobs=-1,
+            use_label_encoder=False,
+            eval_metric='logloss'
         ),
         'lightgbm': lgb.LGBMClassifier(
-            objective='binary',
-            n_estimators=100,
-            max_depth=4,
-            learning_rate=0.1,
-            n_jobs=4,
             random_state=42,
+            n_jobs=-1,
             verbose=-1
         ),
         'random_forest': RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
-            n_jobs=4,
-            random_state=42
+            random_state=42,
+            n_jobs=-1
         ),
         'mlp': MLPClassifier(
-            hidden_layer_sizes=(64, 32),
-            max_iter=200,
-            random_state=42,
-            early_stopping=True,
-            validation_fraction=0.1
-        ),
-        'logistic_regression': LogisticRegression(
-            max_iter=1000,
-            n_jobs=4,
             random_state=42
         ),
+        'logistic_regression': LogisticRegression(
+            random_state=42,
+            n_jobs=-1,
+            max_iter=1000  # Needed for convergence
+        ),
         'knn': KNeighborsClassifier(
-            n_neighbors=5,
-            n_jobs=4
+            n_jobs=-1
         )
     }
     return models.get(model_name.lower())
