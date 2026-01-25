@@ -487,15 +487,14 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 logger.info(f"  [RESULT] Mode={ablation_mode} {year}-{month:02d}: AUC={auc:.4f} | F1={f1:.4f}")
                 
-                # Report
+                # Report 1: Standard
                 report = classification_report(targets_arr, preds_arr > 0.5, output_dict=True)
                 os.makedirs("results/reports", exist_ok=True)
                 with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
                     json.dump(report, f, indent=4)
                     
-                # --- ADJUSTED CLASSIFICATION REPORT (Flipped Sells) ---
+                # Report 2: Adjusted (Flipped Sells)
                 sell_mask = (trans_types_arr == -1.0)
-                
                 targets_flipped = targets_arr.copy()
                 preds_flipped = preds_arr.copy()
                 
@@ -505,8 +504,15 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 # Flip predictions: p -> 1-p for Sells
                 preds_flipped[sell_mask] = 1 - preds_flipped[sell_mask]
                 
+                report_flipped = classification_report(targets_flipped, preds_flipped > 0.5, output_dict=True)
+                
+                # Print Adjusted Report to log
                 logger.info(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
                 logger.info("\n" + classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
+                
+                # Save Adjusted Report
+                with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}_flipped.json", "w") as f:
+                    json.dump(report_flipped, f, indent=4)
                     
             except Exception as e:
                 logger.error(f"Error in metrics: {e}")
