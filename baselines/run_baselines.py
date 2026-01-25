@@ -159,8 +159,9 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     df['Gap_Days'] = df.apply(calc_gap, axis=1)
     df['Log_Gap'] = np.log1p(df['Gap_Days'])
     
-    # 4. Categoricals (One-Hot Encoded) - Match TGN static features
-    for col in ['Party', 'State', 'BioGuideID', 'District']:
+    # 4. Categoricals (One-Hot Encoded) - Match TGN static features EXACTLY
+    # TGN only uses Party and State (+ BioGuideID as node mapping)
+    for col in ['Party', 'State', 'BioGuideID']:
         if col in df.columns:
             df[col] = df[col].fillna('Unknown').astype(str)
         else:
@@ -224,8 +225,8 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     print(f"Horizon: {horizon}, Alpha: {alpha}")
     print(f"{'='*60}")
     
-    # Feature columns
-    cat_features = ['Party', 'State', 'BioGuideID', 'District']
+    # Feature columns (EXACT match with TGN)
+    cat_features = ['Party', 'State', 'BioGuideID']
     num_features = ['Log_Trade_Size', 'Is_Buy', 'Log_Gap'] + [f'Market_{i+1}' for i in range(14)]
     
     # Print feature summary
@@ -234,7 +235,7 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     print(f"  Numerical Features ({len(num_features)}): {num_features[:3]} + 14 market features")
     print(f"  Total Features: {len(cat_features) + len(num_features)}")
     print(f"\n  Feature Alignment with TGN:")
-    print(f"    ✓ Politician: Party, State, BioGuideID, District (one-hot)")
+    print(f"    ✓ Politician: Party, State, BioGuideID (one-hot)")
     print(f"    ✓ Transaction: Log_Trade_Size, Is_Buy, Log_Gap")
     print(f"    ✓ Market: 14-dim price features from price_sequences.pt")
     print(f"    ✓ Labels: Transaction-aware (Buy/Sell different win conditions)")
