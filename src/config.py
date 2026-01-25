@@ -1,32 +1,45 @@
 import os
+from pathlib import Path
 
 # Project Root (Relative to this config file)
-# src/config.py -> Project Root is one level up (.. )
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# Works whether installed as package or run from source
+try:
+    # If installed as package
+    import importlib.resources as pkg_resources
+    PROJECT_ROOT = Path(pkg_resources.files("src").parent)
+except (ImportError, AttributeError):
+    # If running from source
+    PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+# Allow override via environment variable
+PROJECT_ROOT = Path(os.getenv("CHOCOLATE_PROJECT_ROOT", PROJECT_ROOT))
 
 # Data Directories
-# --- Personal Config (Preserved) ---
-# RAW_DATA_DIR = "/data1/user_syeugene/fintech/apple/data/processed"
-# -----------------------------------
-
-# Data Directories (Public Default)
-# Expects data to be in 'data/raw' relative to project root
-RAW_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
-PROCESSED_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
+PROCESSED_DATA_DIR = PROJECT_ROOT / "data"
+PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
 
 # Key Files
 TX_FILENAME = "ml_dataset_reduced_attributes.csv"
-TX_PATH = os.path.join(PROJECT_ROOT, "data", "processed", TX_FILENAME)
+TX_PATH = PROCESSED_DATA_DIR / "processed" / TX_FILENAME
 
 PRICE_FILENAME = "all_tickers_historical_data.pkl"
-PRICE_PATH = os.path.join(RAW_DATA_DIR, PRICE_FILENAME)
+PRICE_PATH = RAW_DATA_DIR / PRICE_FILENAME
 
 # Outputs
-RESULTS_DIR = os.path.join(PROJECT_ROOT, "results")
-LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
-VISUALIZATIONS_DIR = os.path.join(PROJECT_ROOT, "visualizations")
+RESULTS_DIR = PROJECT_ROOT / "results"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 # Make sure local directories exist
-os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
-os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(LOGS_DIR, exist_ok=True)
+PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Convert to strings for backward compatibility
+PROJECT_ROOT = str(PROJECT_ROOT)
+RAW_DATA_DIR = str(RAW_DATA_DIR)
+PROCESSED_DATA_DIR = str(PROCESSED_DATA_DIR)
+TX_PATH = str(TX_PATH)
+PRICE_PATH = str(PRICE_PATH)
+RESULTS_DIR = str(RESULTS_DIR)
+LOGS_DIR = str(LOGS_DIR)

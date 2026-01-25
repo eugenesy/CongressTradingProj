@@ -1,0 +1,22 @@
+name: chocolate
+channels:
+  - pytorch
+  - pyg
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch>=2.0.0
+  - pytorch-cuda=11.8  # Adjust based on your CUDA version
+  - pyg>=2.3.0
+  - pandas>=2.0.0
+  - numpy>=1.24.0
+  - scikit-learn>=1.3.0
+  - tqdm>=4.65.0
+  - matplotlib>=3.7.0
+  - pyarrow>=12.0.0
+  - joblib>=1.3.0
+  - pip
+  - pip:
+    # Add any pip-only packages here
+    # - some-pip-package

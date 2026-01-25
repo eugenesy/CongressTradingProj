@@ -2,13 +2,43 @@
 
 This repository contains the implementation of a Temporal Graph Network (TGN) for predicting excess returns of US Congressperson stock trades.
 
+## Installation
+
+### 1. Clone the repository
+```bash
+git clone https://github.com/yourusername/chocolate.git  # TODO: Update with actual repo URL
+cd chocolate
+```
+
+### 2. Create environment (Conda recommended)
+```bash
+conda env create -f environment.yml
+conda activate chocolate
+```
+
+**Alternative (pip):**
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Install package in editable mode
+```bash
+pip install -e .
+```
+
+### 4. Verify installation
+```bash
+python -c "import src; print('Installation successful!')"
+```
+
 ## Directory Structure
 
-*   `scripts/`: Executable entry points (`run_rolling.py`, `run_ablation.py`).
-*   `src/`: Core library code (`temporal_data.py`, `models_tgn.py`, `config.py`).
-*   `data/`: Data storage (`temporal_data.pt`, `price_sequences.pt`).
-*   `results/`: Training metrics and evaluation JSON reports.
-*   `docs/`: Methodological documentation.
+*   `scripts/`: Executable entry points (`run_rolling.py`, `run_ablation.py`, `build_dataset.py`).
+*   `src/`: Core library code (`temporal_data.py`, `models_tgn.py`, `config.py`, `financial_pipeline/`).
+*   `data/`: Data storage (gitignored - proprietary).
+*   `results/`: Training metrics and evaluation JSON reports (gitignored).
+*   `tests/`: Unit tests (run with `pytest`).
+*   `docs/`: Methodological documentation ([TGN Explainer](docs/TGN_EXPLAINER.md), [Model Overview](docs/MODEL_OVERVIEW.md), [Experiment Log](docs/EXPERIMENT_LOG.md)).
 *   `FUTURE_WORK.md`: Roadmap and Next Steps.
 
 ## Data Generation (From Raw Source)
@@ -63,11 +93,49 @@ python scripts/run_ablation.py --full-only --horizon 6M --alpha 0.05
 python scripts/run_ablation.py --full-run
 ```
 
+## Testing
+
+Run unit tests:
+```bash
+pytest tests/ -v
+```
+
 ## Results & Metrics
 *   **Standard Report**: `report_{mode}_{year}_{month}.json`
 *   **Directional Report**: `report_{mode}_{year}_{month}_directional.json` (Interprets "Sell" success as "Stock Up").
 
+## Documentation
+
+- **[TGN Explainer](docs/TGN_EXPLAINER.md)**: Introduction to Temporal Graph Networks
+- **[Model Overview](docs/MODEL_OVERVIEW.md)**: Architecture details
+- **[Experiment Log](docs/EXPERIMENT_LOG.md)**: Complete experiment history
+- **[Future Work](FUTURE_WORK.md)**: Roadmap and planned improvements
+
 ## Requirements
 *   Python 3.8+
-*   PyTorch, PyTorch Geometric
+*   PyTorch 2.0+, PyTorch Geometric 2.3+
 *   Pandas, NumPy, Matplotlib, Tqdm
+*   See `requirements.txt` or `environment.yml` for full dependencies
+
+## Contributing
+
+<!-- TODO: Add contribution guidelines -->
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+
+## Citation
+
+<!-- TODO: Add BibTeX citation if this is published research -->
+
+## License
+
+<!-- TODO: Add license information -->
+See [LICENSE](LICENSE) for details.
+
+## Troubleshooting
+
+<!-- TODO: Add common issues and solutions -->
+
+**Common Issues:**
+- **Import errors**: Ensure you've installed the package with `pip install -e .`
+- **CUDA errors**: Check PyTorch and CUDA compatibility in `environment.yml`
+- **Missing data**: Run `scripts/build_dataset.py` to generate required files
