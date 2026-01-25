@@ -11,6 +11,27 @@ This repository contains the implementation of a Temporal Graph Network (TGN) fo
 *   `docs/`: Methodological documentation.
 *   `FUTURE_WORK.md`: Roadmap and Next Steps.
 
+## Data Generation (From Raw Source)
+
+If you need to regenerate the dataset from scratch:
+
+### Prerequisites
+Place the raw transaction file (`v5_transactions.csv`) in `data/raw/`.
+
+### Run the Pipeline
+```bash
+python scripts/build_dataset.py
+```
+
+This will:
+1. Download historical price data for all tickers and SPY.
+2. Add benchmark columns, closing prices, and excess returns.
+3. Clean and standardize the data.
+4. Generate `data/processed/ml_dataset_reduced_attributes.csv`.
+5. Build engineered price features (`data/price_sequences.pt`).
+
+**Note**: This process may take several hours depending on the number of tickers.
+
 ## Quick Start
 ### 1. Build Graph
 ```bash
