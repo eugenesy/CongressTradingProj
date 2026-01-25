@@ -669,12 +669,12 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 macro_f1 = f1_score(targets_arr, preds_arr > 0.5, average='macro')
                 count = len(preds)
                 
-                # Save to Dynamic Folder
-                csv_path = f"{args.exp_dir}/ablation_monthly_breakdown.csv"
-                with open(csv_path, 'a') as f:
-                    if f.tell() == 0:
-                        f.write("AblationMode,Year,Month,ROC_AUC,PR_AUC,ACC,F1,Macro_F1,Count\n")
-                    f.write(f"{ablation_mode},{year},{month},{auc:.4f},{pr_auc:.4f},{acc:.4f},{f1:.4f},{macro_f1:.4f},{count}\n")
+                # Save to Legacy Format (Optional - can be removed if not needed)
+                # csv_path = f"{args.exp_dir}/ablation_monthly_breakdown.csv"
+                # with open(csv_path, 'a') as f:
+                #    if f.tell() == 0:
+                #        f.write("AblationMode,Year,Month,ROC_AUC,PR_AUC,ACC,F1,Macro_F1,Count\n")
+                #    f.write(f"{ablation_mode},{year},{month},{auc:.4f},{pr_auc:.4f},{acc:.4f},{f1:.4f},{macro_f1:.4f},{count}\n")
                 
                 logger.info(f"  [RESULT] Mode={ablation_mode} {year}-{month:02d}: AUC={auc:.4f} | F1={f1:.4f}")
                 
@@ -700,7 +700,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 # Flip predictions: p -> 1-p for Sells
                 preds_flipped[sell_mask] = 1 - preds_flipped[sell_mask]
                 
-                # Calculate metrics for flipped
+                # Calculate metrics for flipped (Directional)
                 try:
                     auc_flipped = roc_auc_score(targets_flipped, preds_flipped)
                     pr_auc_flipped = average_precision_score(targets_flipped, preds_flipped)
@@ -708,17 +708,34 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                     auc_flipped = None
                     pr_auc_flipped = None
                 
+                acc_flipped = accuracy_score(targets_flipped, preds_flipped > 0.5)
+                f1_flipped = f1_score(targets_flipped, preds_flipped > 0.5)
+
                 report_flipped = classification_report(targets_flipped, preds_flipped > 0.5, output_dict=True)
                 report_flipped['auc'] = auc_flipped
                 report_flipped['pr_auc'] = pr_auc_flipped
                 
-                # Print Adjusted Report to log
-                logger.info(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
-                logger.info("\n" + classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
-                
                 # Save Adjusted Report
                 with open(f"{args.exp_dir}/reports/report_{ablation_mode}_{year}_{month:02d}_directional.json", "w") as f:
                     json.dump(report_flipped, f, indent=4)
+                
+                # Save Summary CSV (Baseline Format)
+                # Model,Year,Month,Train_Size,Test_Size,Accuracy,F1_Class1,AUC,PR_AUC,Dir_Accuracy,Dir_F1,Dir_AUC
+                summary_path = f"{args.exp_dir}/summary_{ablation_mode}.csv"
+                with open(summary_path, 'a') as f:
+                    if f.tell() == 0:
+                        f.write("Model,Year,Month,Train_Size,Test_Size,Accuracy,F1_Class1,AUC,PR_AUC,Dir_Accuracy,Dir_F1,Dir_AUC\n")
+                    
+                    # Handle None AUCs
+                    auc_val = f"{auc:.4f}" if auc is not None else ""
+                    pr_auc_val = f"{pr_auc:.4f}" if pr_auc is not None else ""
+                    dir_auc_val = f"{auc_flipped:.4f}" if auc_flipped is not None else ""
+                    
+                    f.write(f"{ablation_mode},{year},{month},{len(train_data.src)},{len(test_data.src)},{acc:.4f},{f1:.4f},{auc_val},{pr_auc_val},{acc_flipped:.4f},{f1_flipped:.4f},{dir_auc_val}\n")
+                
+                # Print Adjusted Report to log
+                logger.info(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
+                logger.info("\n" + classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
                     
             except Exception as e:
                 logger.error(f"Error in metrics: {e}")
