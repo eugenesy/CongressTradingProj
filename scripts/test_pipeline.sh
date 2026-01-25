@@ -13,6 +13,20 @@ echo ""
 # Activate conda environment (optional, comment out if already activated)
 # conda activate chocolate
 
+# Step 0: Check if package is installed
+echo "[0/4] Checking package installation..."
+python -c "import src" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Package not installed!"
+    echo ""
+    echo "Please install the package first:"
+    echo "  pip install -e ."
+    echo ""
+    exit 1
+fi
+echo "✅ Package installed"
+echo ""
+
 # Step 1: Check if data files exist
 echo "[1/4] Checking for required data files..."
 if [ ! -f "data/processed/ml_dataset_reduced_attributes.csv" ]; then

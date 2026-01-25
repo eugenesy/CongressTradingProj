@@ -15,6 +15,20 @@ echo "⚠️  WARNING: This will regenerate all data files!"
 echo "   This process may take several hours."
 echo ""
 
+# Step 0: Check if package is installed
+echo "[0/4] Checking package installation..."
+python -c "import src" 2>/dev/null
+if [ $? -ne 0 ]; then
+    echo "❌ ERROR: Package not installed!"
+    echo ""
+    echo "Please install the package first:"
+    echo "  pip install -e ."
+    echo ""
+    exit 1
+fi
+echo "✅ Package installed"
+echo ""
+
 # Step 1: Build dataset from scratch
 echo "[1/4] Building dataset from raw source..."
 echo "   This may take several hours..."
