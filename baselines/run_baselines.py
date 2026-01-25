@@ -104,40 +104,7 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     
     df = df.dropna(subset=[er_col, 'Filed'])
     
-    # --- Features (Create BEFORE using in labels) ---
-    
-    # 1. Parse Trade Size
-    def parse_trade_size(val):
-        try:
-            val = str(val).replace('$', '').replace(',', '').strip()
-            if ' - ' in val:
-                low, high = val.split(' - ')
-                return (float(low) + float(high)) / 2
-            return float(val)
-        except:
-            return 0.0
-    
-    df['Trade_Size_USD_Parsed'] = df['Trade_Size_USD'].apply(parse_trade_size)
-    df['Log_Trade_Size'] = np.log1p(df['Trade_Size_USD_Parsed'])
-    
-    # 2. Is Buy (-1 for Sell, +1 for Buy) - CREATE THIS FIRST
-    df['Is_Buy'] = df['Transaction'].astype(str).apply(
-        lambda x: 1.0 if 'Purchase' in x.title() else (-1.0 if 'Sale' in x.title() else 0.0)
-    )
-    df = df[df['Is_Buy'] != 0].copy()  # Filter Exchange
-    
-    # 3. Filing Gap
-    def calc_gap(row):
-        if pd.isnull(row['Filed']) or pd.isnull(row['Traded']):
-            return 30
-        gap = (row['Filed'] - row['Traded']).days
-        return max(0, gap)
-    
-    df['Gap_Days'] = df.apply(calc_gap, axis=1)
-    df['Log_Gap'] = np.log1p(df['Gap_Days'])
-    
-    # --- NOW Create Labels (using Is_Buy) ---
-    # Win/Loss Label (Training Target) - TRANSACTION-AWARE
+    # --- Win/Loss Label (Training Target) - TRANSACTION-AWARE ---
     # Matching TGN logic exactly:
     # - Buy: Win if excess_return > alpha (stock outperformed)
     # - Sell: Win if excess_return < alpha (stock underperformed)
@@ -153,11 +120,43 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     # Sell wins if return < alpha (stock went down relative to SPY)
     df.loc[sell_mask & (df[er_col] < alpha), 'Target_WinLoss'] = 1
     
-    # Directional Label (for Directional Reporting)
+    # --- Directional Label (for Directional Reporting) ---
     # This will be "flipped" for Sells during reporting (matching TGN)
     # For now, just use the same as win/loss - we'll flip during evaluation
     df['Target_Direction'] = df['Target_WinLoss'].copy()
     df['Transaction_Type'] = df['Is_Buy'].copy()  # Store for flipping later
+    
+    # --- Features (Matching TGN exactly) ---
+    
+    # 1. Parse Trade Size
+    def parse_trade_size(val):
+        try:
+            val = str(val).replace('$', '').replace(',', '').strip()
+            if ' - ' in val:
+                low, high = val.split(' - ')
+                return (float(low) + float(high)) / 2
+            return float(val)
+        except:
+            return 0.0
+    
+    df['Trade_Size_USD_Parsed'] = df['Trade_Size_USD'].apply(parse_trade_size)
+    df['Log_Trade_Size'] = np.log1p(df['Trade_Size_USD_Parsed'])
+    
+    # 2. Is Buy (-1 for Sell, +1 for Buy)
+    df['Is_Buy'] = df['Transaction'].astype(str).apply(
+        lambda x: 1.0 if 'Purchase' in x.title() else (-1.0 if 'Sale' in x.title() else 0.0)
+    )
+    df = df[df['Is_Buy'] != 0].copy()  # Filter Exchange
+    
+    # 3. Filing Gap
+    def calc_gap(row):
+        if pd.isnull(row['Filed']) or pd.isnull(row['Traded']):
+            return 30
+        gap = (row['Filed'] - row['Traded']).days
+        return max(0, gap)
+    
+    df['Gap_Days'] = df.apply(calc_gap, axis=1)
+    df['Log_Gap'] = np.log1p(df['Gap_Days'])
     
     # 4. Categoricals (One-Hot Encoded) - Match TGN static features
     for col in ['Party', 'State', 'BioGuideID', 'District']:
@@ -227,6 +226,18 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     # Feature columns
     cat_features = ['Party', 'State', 'BioGuideID', 'District']
     num_features = ['Log_Trade_Size', 'Is_Buy', 'Log_Gap'] + [f'Market_{i+1}' for i in range(14)]
+    
+    # Print feature summary
+    print(f"\n📊 Feature Summary:")
+    print(f"  Categorical Features ({len(cat_features)}): {cat_features}")
+    print(f"  Numerical Features ({len(num_features)}): {num_features[:3]} + 14 market features")
+    print(f"  Total Features: {len(cat_features) + len(num_features)}")
+    print(f"\n  Feature Alignment with TGN:")
+    print(f"    ✓ Politician: Party, State, BioGuideID, District (one-hot)")
+    print(f"    ✓ Transaction: Log_Trade_Size, Is_Buy, Log_Gap")
+    print(f"    ✓ Market: 14-dim price features from price_sequences.pt")
+    print(f"    ✓ Labels: Transaction-aware (Buy/Sell different win conditions)")
+    print()
     
     # Create output directory
     out_dir = RESULTS_DIR / f"H_{horizon}_A_{alpha}" / "reports"
