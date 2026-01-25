@@ -104,23 +104,27 @@ def load_data(horizon: str = '1M', alpha: float = 0.0):
     
     df = df.dropna(subset=[er_col, 'Filed'])
     
-    # Win/Loss Label (Training Target)
-    # Alpha threshold: win if excess_return > alpha
-    df['Target_WinLoss'] = (df[er_col] > alpha).astype(int)
+    # --- Win/Loss Label (Training Target) - TRANSACTION-AWARE ---
+    # Matching TGN logic exactly:
+    # - Buy: Win if excess_return > alpha (stock outperformed)
+    # - Sell: Win if excess_return < alpha (stock underperformed)
     
-    # Directional Label (for Directional Reporting)
-    # Price went up = 1, down = 0 (regardless of transaction type)
-    # We need Stock_Return column, derive from Excess + SPY
-    # For simplicity: if Excess > 0 and transaction is Sale, or if Excess > 0 and Purchase, 
-    # Actually TGN uses: For Sell, "success" = stock went DOWN
-    # Let's compute from the raw returns if available
-    stock_return_col = f'Stock_Return_{horizon}' if f'Stock_Return_{horizon}' in df.columns else None
+    df['Target_WinLoss'] = 0  # Initialize
     
-    if stock_return_col and stock_return_col in df.columns:
-        df['Target_Direction'] = (df[stock_return_col] > 0).astype(int)
-    else:
-        # Fallback: approximate from excess return (not perfect)
-        df['Target_Direction'] = (df[er_col] > 0).astype(int)
+    buy_mask = (df['Is_Buy'] == 1.0)
+    sell_mask = (df['Is_Buy'] == -1.0)
+    
+    # Buy wins if return > alpha
+    df.loc[buy_mask & (df[er_col] > alpha), 'Target_WinLoss'] = 1
+    
+    # Sell wins if return < alpha (stock went down relative to SPY)
+    df.loc[sell_mask & (df[er_col] < alpha), 'Target_WinLoss'] = 1
+    
+    # --- Directional Label (for Directional Reporting) ---
+    # This will be "flipped" for Sells during reporting (matching TGN)
+    # For now, just use the same as win/loss - we'll flip during evaluation
+    df['Target_Direction'] = df['Target_WinLoss'].copy()
+    df['Transaction_Type'] = df['Is_Buy'].copy()  # Store for flipping later
     
     # --- Features (Matching TGN exactly) ---
     
@@ -259,7 +263,6 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             
             X_test = test_df[cat_features + num_features]
             y_test_winloss = test_df['Target_WinLoss']
-            y_test_direction = test_df['Target_Direction']
             
             # Build pipeline
             preprocessor = ColumnTransformer(
@@ -284,9 +287,22 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             # Compute Standard Report (Win/Loss)
             report_standard = compute_metrics(y_test_winloss, y_pred, y_prob)
             
-            # Compute Directional Report
-            # For directional: prediction is same, but ground truth is direction
-            report_directional = compute_metrics(y_test_direction, y_pred, y_prob)
+            # Compute Directional Report (Flip Sells - matching TGN)
+            # For Sells: flip both targets and predictions
+            trans_types = test_df['Transaction_Type'].values
+            sell_mask = (trans_types == -1.0)
+            
+            # Create flipped versions
+            y_test_dir_flipped = y_test_winloss.copy()
+            y_pred_flipped = y_pred.copy()
+            y_prob_flipped = y_prob.copy()
+            
+            # Flip Sells: 1 -> 0, 0 -> 1
+            y_test_dir_flipped[sell_mask] = 1 - y_test_dir_flipped[sell_mask]
+            y_pred_flipped[sell_mask] = 1 - y_pred_flipped[sell_mask]
+            y_prob_flipped[sell_mask] = 1 - y_prob_flipped[sell_mask]
+            
+            report_directional = compute_metrics(y_test_dir_flipped, y_pred_flipped, y_prob_flipped)
             
             # Save JSON reports
             std_file = out_dir / f"report_{model_name}_{year}_{month:02d}.json"
