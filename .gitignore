@@ -28,3 +28,6 @@ data/raw/*.csv
 *.pt
 *.pkl
 
+# Baseline results (generated)
+results/baselines/
+
