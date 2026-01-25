@@ -16,7 +16,8 @@ This repository contains the implementation of a Temporal Graph Network (TGN) fo
 If you need to regenerate the dataset from scratch:
 
 ### Prerequisites
-Place the raw transaction file (`v5_transactions.csv`) in `data/raw/`.
+1. Place the raw transaction file (`v5_transactions.csv`) in `data/raw/`.
+2. Ensure you have API access for downloading historical price data (used by the pipeline).
 
 ### Run the Pipeline
 ```bash
@@ -24,13 +25,16 @@ python scripts/build_dataset.py
 ```
 
 This will:
-1. Download historical price data for all tickers and SPY.
+1. **Download historical price data** for all tickers and SPY → `data/parquet/*.parquet` (~3000 files, ~473MB)
 2. Add benchmark columns, closing prices, and excess returns.
 3. Clean and standardize the data.
 4. Generate `data/processed/ml_dataset_reduced_attributes.csv`.
-5. Build engineered price features (`data/price_sequences.pt`).
+5. Build engineered price features → `data/price_sequences.pt`.
 
-**Note**: This process may take several hours depending on the number of tickers.
+**Note**: 
+- This process may take several hours depending on the number of tickers.
+- The parquet files and generated datasets are **proprietary** and excluded from git via `.gitignore`.
+- If you already have the parquet files and processed CSV, you can skip this step.
 
 ## Quick Start
 ### 1. Build Graph
