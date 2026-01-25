@@ -22,6 +22,7 @@ import os
 import argparse
 from datetime import datetime
 from pathlib import Path
+from tqdm import tqdm
 
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -248,8 +249,14 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     
     all_results = []
     
+    # Create list of all year-month combinations
+    year_months = []
     for year in range(start_year, end_year + 1):
         for month in range(1, 13):
+            year_months.append((year, month))
+    
+    # Progress bar for monthly evaluation
+    for year, month in tqdm(year_months, desc=f"{model_name.upper()}", unit="month"):
             # Test period
             test_start = pd.Timestamp(year=year, month=month, day=1)
             if month == 12:
@@ -266,8 +273,6 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             
             if len(test_df) == 0 or len(train_df) < 100:
                 continue
-            
-            print(f"  {year}-{month:02d} | Train: {len(train_df):5d} | Test: {len(test_df):4d}", end="")
             
             # Prepare features
             X_train = train_df[cat_features + num_features]
@@ -325,7 +330,8 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             with open(dir_file, 'w') as f:
                 json.dump(report_directional, f, indent=4)
             
-            print(f" | F1: {report_standard.get('1.0', {}).get('f1-score', 0):.3f} | AUC: {report_standard.get('auc', 0):.3f}")
+            # Update progress bar with current metrics
+            tqdm.write(f"  {year}-{month:02d} | Train: {len(train_df):5d} | Test: {len(test_df):4d} | F1: {report_standard.get('1.0', {}).get('f1-score', 0):.3f} | AUC: {report_standard.get('auc', 0):.3f}")
             
             all_results.append({
                 'Model': model_name,
