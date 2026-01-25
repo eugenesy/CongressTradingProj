@@ -381,7 +381,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                             s_dst = torch.zeros_like(s_dst)
                         
                         with torch.no_grad():
-                            pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
+                            pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze(-1)
                             
                             if val_mask.sum() > 0:
                                 loss = criterion(pred_logits[val_mask].view(-1), batch_targets[val_mask].view(-1))
@@ -640,7 +640,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                     s_dst = torch.zeros_like(s_dst)
                 
                 with torch.no_grad():
-                    pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
+                    pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze(-1)
                     
                     if has_label.sum() > 0:
                         p = pred_logits[has_label].sigmoid().cpu().numpy()
