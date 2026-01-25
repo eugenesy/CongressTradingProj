@@ -169,15 +169,26 @@ class TemporalGraphBuilder:
                 p_feat = torch.zeros((14,), dtype=torch.float32)
             price_seqs.append(p_feat)
             
-            # Label
-            lbl = row.get('Label_1M', 0.0)
-            if pd.isna(lbl): lbl = 0.0
-            y.append(lbl)
+            # Label - Store ALL Excess Returns (1M..24M)
+            # Columns: Excess_Return_1M, Excess_Return_2M, Excess_Return_3M, Excess_Return_6M, 
+            #          Excess_Return_8M, Excess_Return_12M, Excess_Return_18M, Excess_Return_24M
+            # Keep NaNs as is (don't fill with 0.0)
             
-            # Resolution Time (when this trade's label becomes "known")
-            # Label_1M = 1-month forward return, so resolution = Trade + 30 days
-            resolution_ts = (row['Traded_DT'] + pd.Timedelta(days=30)).timestamp() - base_time
-            resolution_t.append(int(resolution_ts))
+            horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
+            labels_multi = []
+            for h in horizons:
+                val = row.get(f'Excess_Return_{h}', float('nan'))
+                labels_multi.append(val)
+            y.append(labels_multi)
+            
+            # Helper: Store Trade Timestamp for Dynamic Resolution Calculation
+            # We need to know when the trade happened to calc (Trade + Horizon)
+            if pd.notnull(row['Traded_DT']):
+                trade_ts = row['Traded_DT'].timestamp() - base_time
+            else:
+                trade_ts = ts - (30*86400) # Fallback: Filed - 30 days?
+            
+            resolution_t.append(int(trade_ts)) # We store TRADE time here, rename attribute later
             
         print(f"Skipped {skipped} transactions due to rare tickers/missing IDs.")
         
@@ -186,7 +197,7 @@ class TemporalGraphBuilder:
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
             msg=torch.tensor(msg, dtype=torch.float),
-            y=torch.tensor(y, dtype=torch.float)
+            y=torch.tensor(y, dtype=torch.float) # Shape: [N, 8]
         )
         
         # Add price features (engineered)
@@ -196,8 +207,8 @@ class TemporalGraphBuilder:
             # Fallback for empty (shouldn't happen if skip logic holds)
             data.price_seq = torch.zeros((len(src), 14))
         
-        # Add resolution_t as separate attribute (for dynamic label masking)
-        data.resolution_t = torch.tensor(resolution_t, dtype=torch.long)
+        # Add trade_t (was resolution_t) for dynamic horizon calculation
+        data.trade_t = torch.tensor(resolution_t, dtype=torch.long)
         
         # Meta info
         data.num_nodes = total_nodes

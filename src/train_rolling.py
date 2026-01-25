@@ -18,7 +18,7 @@ import json
 def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, num_parties=5, num_states=50,
+def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_nodes=None, num_parties=5, num_states=50,
                        max_epochs=20, patience=5):
     device = get_device()
     data = data.to(device)
@@ -130,25 +130,72 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
+                    # --- DYNAMIC LABEL GENERATION ---
+                    # 1. Determine Horizon Index and Days
+                    horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                    horizon_days_map = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}
+                    
+                    h_idx = horizon_map.get(args.horizon, 0)
+                    h_days = horizon_days_map.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
+                    # 2. Select Raw Label (Excess Return) for Horizon
+                    # batch.y is now [Batch, 8]
+                    raw_return = batch.y[:, h_idx] # [Batch]
+                    
+                    # 3. Dynamic Resolution Time
+                    # trade_t is stored in batch.trade_t (was resolution_t in old data, but check TemporalData)
+                    # We renamed it to trade_t in TemporalData, but TemporalDataLoader slices attributes.
+                    # It should preserve the name if it's in the data object.
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
+                    
+                    # 4. Masking
+                    # - Label must not be NaN
+                    # - Resolution time must be in the past (resolution_t < batch_max_t)
+                    # Note: For TRAINING, we simulate online setting. We can only learn from events
+                    # where the outcome is ALREADY known at the time of the batch.
+                    batch_max_t = t.max()
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    train_mask = is_known & has_label
+                    
+                    if train_mask.sum() == 0:
+                        # No valid labels in this batch, just update memory and skip gradient
+                        # But we still need to compute embeddings efficiently
+                        pass
+                    
+                    # 5. Binarize Label (Target)
+                    # Buy (1.0): 1 if Return > alpha
+                    # Sell (-1.0): 1 if Return < -alpha (Success = Stock Drop)
+                    alpha = args.alpha
+                    is_buy = msg[:, 1] # [Batch]
+                    
+                    # Initialize Targets
+                    targets = torch.zeros_like(raw_return)
+                    
+                    # Buy Logic: Win if Ret > alpha
+                    buy_mask = (is_buy == 1.0)
+                    targets[buy_mask & (raw_return > alpha)] = 1.0
+                    
+                    # Sell Logic: Win if Ret < -alpha
+                    sell_mask = (is_buy == -1.0)
+                    targets[sell_mask & (raw_return < alpha)] = 1.0
+                    
+                    # Apply Mask to everything that goes into Loss
+                    # We only compute loss on 'train_mask' items
+                    
+                    # ... (Continue with existing pipeline, but using 'targets[train_mask]') ...
+                    
                     # --- Price Embedding (Current Batch) ---
-                    # 1. Retrieve Sequence
-                    # batch indices in 'train_data' (which is data[train_idx])
-                    # Note: TemporalDataLoader slices attributes. batch.price_seq should exist.
-                    # We need to verify if Tensor attributes are sliced by PyG default.
-                    # If not, we might need a workaround. Assuming it works for now.
                     if hasattr(batch, 'price_seq'):
                          price_seq = batch.price_seq
                     else:
-                         # Fallback: We can't easily recover global indices here without passing them.
-                         # But PyG 2.x supports custom node/edge attributes if they match first dim.
-                         # data.price_seq has dim0 = data.num_edges. So it should work.
                          price_seq = torch.zeros((len(src), 14), device=device)
                     
-                    # 2. Encode
-                    price_emb = model.get_price_embedding(price_seq) # [Batch, 32]
-                    
-                    # 3. Augment Msg (for Memory Update)
-                    augmented_msg = torch.cat([msg, price_emb], dim=1) # [Batch, 3+32]
+                    price_emb = model.get_price_embedding(price_seq) 
+                    augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
                     n_id = torch.cat([src, dst]).unique()
                     n_id, edge_index, e_id = neighbor_loader(n_id)
@@ -156,29 +203,46 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     
                     hist_t = data.t[e_id]
                     hist_msg = data.msg[e_id]
-                    
-                    # --- Price Embedding (Neighbors/History) ---
-                    # We need the price embedding for the *neighbor* edges to use in GNN/Decoder
                     hist_price_seq = data.price_seq[e_id]
                     hist_price_emb = model.get_price_embedding(hist_price_seq)
                     
-                    # === DYNAMIC LABEL FEATURE ===
-                    # Compute "current time" as max of batch (when we are predicting)
-                    batch_max_t = t.max()
+                    # === DYNAMIC LABEL FEATURE FOR HISTORY ===
+                    # We also need to properly mask labels in the HISTORY (edge_attr)
+                    # History resolution time depends on the horizon too?
+                    # The stored history labels are raw returns (or whatever was in data.y).
+                    # Wait, data.y is [N, 8].
+                    # We need to pass valid masked labels to the model.
+                    # The model expects a single scalar label in edge_attr.
+                    # We should probably pick the SAME horizon for history as the current task.
+                    # So for history edges:
+                    hist_raw_returns = data.y[e_id, h_idx] # Select column
+                    hist_trade_t = data.trade_t[e_id]
+                    hist_resolution = hist_trade_t + h_seconds
                     
-                    # Resolution time for each historical edge
-                    hist_resolution = data.resolution_t[e_id]
+                    # Mask: 1.0 if resolved relative to CURRENT batch time
+                    hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
                     
-                    # Mask: 1.0 if resolved (label known), 0.0 if not
-                    is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                    # Generate Binary Label for History
+                    # We need is_buy for history edges. "msg" has 3 dims: [Amt, IsBuy, Gap]
+                    hist_is_buy = hist_msg[:, 1]
+                    hist_targets = torch.zeros_like(hist_raw_returns)
                     
-                    # Raw labels for history
-                    raw_label = data.y[e_id].unsqueeze(-1)
+                    h_buy_mask = (hist_is_buy == 1.0)
+                    hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
                     
-                    # Masked label: show actual if resolved, else 0.5 (neutral)
-                    masked_label = raw_label * is_resolved + 0.5 * (1 - is_resolved)
+                    h_sell_mask = (hist_is_buy == -1.0)
+                    hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
                     
-                    # Age feature: how old is each neighbor edge (log-normalized days)
+                    # If NaN, treat as unresolved (mask=0)
+                    isnan_mask = torch.isnan(hist_raw_returns)
+                    hist_is_resolved[isnan_mask] = 0.0
+                    hist_targets[isnan_mask] = 0.0 # Just to be safe
+                    
+                    hist_targets = hist_targets.unsqueeze(-1)
+                    
+                    # Masked label: Real Label if resolved, else 0.5
+                    masked_label_feat = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                    
                     age_seconds = (batch_max_t - hist_t).float()
                     age_days = age_seconds / 86400.0
                     age_feat = torch.log1p(age_days).unsqueeze(-1)
@@ -188,33 +252,7 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     rel_t = last_update - hist_t
                     rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
                     
-                    # Final edge_attr: [time_enc, msg, masked_label, age, PRICE_EMB]
-                    # Note: hist_msg is the RAW msg (3 dims) stored in 'data'.
-                    # It does NOT contain price_emb.
-                    # PriceEmb is computed on the fly from 'data.price_seq'.
-                    # So we concat: [Time, RawMsg, PriceEmb, MaskedLabel, Age]
-                    # Wait, 'augmented_msg_dim' in TGN init was 'raw_msg_dim + price_emb'.
-                    # And 'edge_dim' in GAT was 'msg_dim + time + 2'.
-                    # 'msg_dim' passed to GAT was 'augmented_msg_dim'.
-                    # So GAT expects [RawMsg + PriceEmb] + [Time + 2].
-                    # Order in GAT: 'edge_dim' is just a size.
-                    # TGN.forward calls GAT(..., edge_attr).
-                    # GAT uses edge_attr for linear projection.
-                    # So the CONTENT of edge_attr must match dimension size.
-                    # Dimensions:
-                    # Time: 100? No, time_enc.out_channels usually 100? 
-                    # Memory time_dim=100.
-                    # In TGN model code: `edge_dim = msg_dim + time_enc.out_channels + 2`.
-                    # `msg_dim` = 3 + 32 = 35.
-                    # So edge_attr must have 35 + Time + 2 dims.
-                    # Components:
-                    # 1. Time Enc (100)
-                    # 2. Msg (35) -> (Raw 3 + Price 32)
-                    # 3. Label (1)
-                    # 4. Age (1)
-                    # Total logic fits.
-                    
-                    edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
+                    edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label_feat, age_feat], dim=-1)
                     
                     z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i] for i in src.tolist()]]
@@ -223,23 +261,25 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     s_src = model.encode_static(data.x_static[src])
                     s_dst = model.encode_static(data.x_static[dst])
                     
-                    # Predictor needs Price Emb for *current* trade (p_src, p_dst)
-                    # Use 'price_emb' calculated above for current batch events.
-                    # 'price_emb' is [Batch, 32].
-                    # 'price_emb' is 1 per trade.
-                    # Pass it as both src/dst context (symmetric context for the edge).
+                    # Predictor
                     pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(pred_pos.squeeze(), batch.y)
-                    loss.backward()
-                    optimizer.step()
                     
-                    # Track batch metrics
-                    batch_losses.append(loss.item())
-                    all_batch_losses.append(loss.item())  # Global batch tracker
-                    with torch.no_grad():
-                        batch_pred = pred_pos.sigmoid().cpu().numpy()
-                        epoch_preds.extend(batch_pred.flatten())
-                        epoch_targets.extend(batch.y.cpu().numpy())
+                    # LOSS Calculation - Only on Valid Train Mask
+                    if train_mask.sum() > 0:
+                        loss = criterion(pred_pos[train_mask].view(-1), targets[train_mask].view(-1))
+                        loss.backward()
+                        optimizer.step()
+                        
+                        batch_losses.append(loss.item())
+                        all_batch_losses.append(loss.item())
+                        
+                        with torch.no_grad():
+                            batch_pred = pred_pos[train_mask].sigmoid().cpu().numpy()
+                            epoch_preds.extend(batch_pred.flatten())
+                            epoch_targets.extend(targets[train_mask].cpu().numpy())
+                    else:
+                        # If no loss, just step memory? No backprop.
+                        pass
                     
                     model.memory.update_state(src, dst, t, augmented_msg)
                     neighbor_loader.insert(src, dst)
@@ -297,6 +337,38 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
+                    # --- DYNAMIC LABEL ---
+                    # Same logic as Train
+                    horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                    h_idx = horizon_map.get(args.horizon, 0)
+                    h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
+                    raw_return = batch.y[:, h_idx]
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
+                    
+                    batch_max_t = t.max()
+                    
+                    # Validation Masking - IMPORTANT: Even in validation we skip NaNs
+                    # We usually assume validation labels are "known", but if they are NaN (missing price data), we can't eval.
+                    # We also technically should skip "future" labels if we want strictly realistic eval,
+                    # but usually for validation set we assume we have ground truth for that period.
+                    # However, to be consistent with "can we label this?", let's keep masking.
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    val_mask = is_known & has_label
+                    
+                    # Targets
+                    alpha = args.alpha
+                    is_buy = msg[:, 1]
+                    targets = torch.zeros_like(raw_return)
+                    buy_mask = (is_buy == 1.0)
+                    targets[buy_mask & (raw_return > alpha)] = 1.0
+                    sell_mask = (is_buy == -1.0)
+                    targets[sell_mask & (raw_return < alpha)] = 1.0
+                    
                     # Store augmented msg for update at end of loop
                     if hasattr(batch, 'price_seq'):
                          price_seq = batch.price_seq
@@ -317,11 +389,27 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                         hist_price_seq = data.price_seq[e_id]
                         hist_price_emb = model.get_price_embedding(hist_price_seq)
                         
-                        batch_max_t = t.max()
-                        hist_resolution = data.resolution_t[e_id]
-                        is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
-                        raw_label = data.y[e_id].unsqueeze(-1)
-                        masked_label = raw_label * is_resolved + 0.5 * (1 - is_resolved)
+                        # --- HISTORY LABEL MASKING (Dynamic) ---
+                        hist_raw_returns = data.y[e_id, h_idx]
+                        hist_trade_t = data.trade_t[e_id]
+                        hist_resolution = hist_trade_t + h_seconds
+                        
+                        hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                        
+                        hist_is_buy = hist_msg[:, 1]
+                        hist_targets = torch.zeros_like(hist_raw_returns)
+                        h_buy_mask = (hist_is_buy == 1.0)
+                        hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
+                        h_sell_mask = (hist_is_buy == -1.0)
+                        hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
+                        
+                        isnan_mask = torch.isnan(hist_raw_returns)
+                        hist_is_resolved[isnan_mask] = 0.0
+                        hist_targets[isnan_mask] = 0.0
+                        hist_targets = hist_targets.unsqueeze(-1)
+                        
+                        masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+
                         age_seconds = (batch_max_t - hist_t).float()
                         age_days = age_seconds / 86400.0
                         age_feat = torch.log1p(age_days).unsqueeze(-1)
@@ -340,13 +428,19 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                         s_dst = model.encode_static(data.x_static[dst])
                         
                         with torch.no_grad():
+                            # Only Eval on Mask
                             pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
-                            loss = criterion(pred_logits, batch.y)
-                            val_losses.append(loss.item())
                             
-                            p = pred_logits.sigmoid().cpu().numpy()
-                            val_preds.extend(p.flatten())
-                            val_targets.extend(batch.y.cpu().numpy())
+                            if val_mask.sum() > 0:
+                                loss = criterion(pred_logits[val_mask], targets[val_mask])
+                                val_losses.append(loss.item())
+                                
+                                p = pred_logits[val_mask].sigmoid().cpu().numpy()
+                                val_preds.extend(p.flatten())
+                                val_targets.extend(targets[val_mask].cpu().numpy())
+                            else:
+                                # Start fresh if empty batch?
+                                pass
                     
                     model.memory.update_state(src, dst, t, augmented_msg)
                     neighbor_loader.insert(src, dst)
@@ -412,6 +506,34 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
+                    # --- DYNAMIC LABEL ---
+                    horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                    h_idx = horizon_map.get(args.horizon, 0)
+                    h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
+                    raw_return = batch.y[:, h_idx]
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
+                    
+                    batch_max_t = t.max()
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    train_mask = is_known & has_label
+                    
+                    if train_mask.sum() == 0:
+                        pass # Valid for Phase 2 as well
+                    
+                    # Targets
+                    alpha = args.alpha
+                    is_buy = msg[:, 1]
+                    targets = torch.zeros_like(raw_return)
+                    buy_mask = (is_buy == 1.0)
+                    targets[buy_mask & (raw_return > alpha)] = 1.0
+                    sell_mask = (is_buy == -1.0)
+                    targets[sell_mask & (raw_return < alpha)] = 1.0
+                    
                     # --- Price Embedding (Current Batch) ---
                     if hasattr(batch, 'price_seq'):
                          price_seq = batch.price_seq
@@ -432,11 +554,27 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     hist_price_seq = data.price_seq[e_id]
                     hist_price_emb = model.get_price_embedding(hist_price_seq)
                     
-                    batch_max_t = t.max()
-                    hist_resolution = data.resolution_t[e_id]
-                    is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
-                    raw_label = data.y[e_id].unsqueeze(-1)
-                    masked_label = raw_label * is_resolved + 0.5 * (1 - is_resolved)
+                    # --- HISTORY LABEL MASKING (Dynamic) ---
+                    hist_raw_returns = data.y[e_id, h_idx]
+                    hist_trade_t = data.trade_t[e_id]
+                    hist_resolution = hist_trade_t + h_seconds
+                    
+                    hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                    
+                    hist_is_buy = hist_msg[:, 1]
+                    hist_targets = torch.zeros_like(hist_raw_returns)
+                    h_buy_mask = (hist_is_buy == 1.0)
+                    hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
+                    h_sell_mask = (hist_is_buy == -1.0)
+                    hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
+                    
+                    isnan_mask = torch.isnan(hist_raw_returns)
+                    hist_is_resolved[isnan_mask] = 0.0
+                    hist_targets[isnan_mask] = 0.0
+                    hist_targets = hist_targets.unsqueeze(-1)
+                    
+                    masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                    
                     age_seconds = (batch_max_t - hist_t).float()
                     age_days = age_seconds / 86400.0
                     age_feat = torch.log1p(age_days).unsqueeze(-1)
@@ -454,11 +592,14 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                     s_dst = model.encode_static(data.x_static[dst])
                     
                     pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
-                    loss = criterion(pred_pos.squeeze(), batch.y)
-                    loss.backward()
-                    optimizer.step()
                     
-                    epoch_loss += loss.item()
+                    if train_mask.sum() > 0:
+                        loss = criterion(pred_pos[train_mask].view(-1), targets[train_mask].view(-1))
+                        loss.backward()
+                        optimizer.step()
+                        epoch_loss += loss.item()
+                    else:
+                        pass
                     batch_count += 1
                     
                     model.memory.update_state(src, dst, t, augmented_msg)
@@ -500,6 +641,24 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 batch = batch.to(device)
                 src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                 
+                # --- DYNAMIC LABEL ---
+                horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                h_idx = horizon_map.get(args.horizon, 0)
+                raw_return = batch.y[:, h_idx]
+                
+                # For Test, we assume labels exist or will be evaluated against future knowns
+                # We drop NaNs
+                has_label = ~torch.isnan(raw_return)
+                
+                # Targets
+                alpha = args.alpha
+                is_buy = msg[:, 1]
+                batch_targets = torch.zeros_like(raw_return)
+                buy_mask = (is_buy == 1.0)
+                batch_targets[buy_mask & (raw_return > alpha)] = 1.0
+                sell_mask = (is_buy == -1.0)
+                batch_targets[sell_mask & (raw_return < alpha)] = 1.0
+                
                 # --- Price Embedding (Current Batch) ---
                 if hasattr(batch, 'price_seq'):
                      price_seq = batch.price_seq
@@ -520,12 +679,31 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 hist_price_seq = data.price_seq[e_id]
                 hist_price_emb = model.get_price_embedding(hist_price_seq)
                 
-                # === DYNAMIC LABEL FEATURE (Test) ===
+                # --- HISTORY LABEL MASKING (Dynamic) ---
+                h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                h_seconds = h_days * 86400
                 batch_max_t = t.max()
-                hist_resolution = data.resolution_t[e_id]
-                is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
-                raw_label = data.y[e_id].unsqueeze(-1)
-                masked_label = raw_label * is_resolved + 0.5 * (1 - is_resolved)
+                
+                hist_raw_returns = data.y[e_id, h_idx]
+                hist_trade_t = data.trade_t[e_id]
+                hist_resolution = hist_trade_t + h_seconds
+                
+                hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                
+                hist_is_buy = hist_msg[:, 1]
+                hist_targets = torch.zeros_like(hist_raw_returns)
+                h_buy_mask = (hist_is_buy == 1.0)
+                hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
+                h_sell_mask = (hist_is_buy == -1.0)
+                hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
+                
+                isnan_mask = torch.isnan(hist_raw_returns)
+                hist_is_resolved[isnan_mask] = 0.0
+                hist_targets[isnan_mask] = 0.0
+                hist_targets = hist_targets.unsqueeze(-1)
+                
+                masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                
                 age_seconds = (batch_max_t - hist_t).float()
                 age_days = age_seconds / 86400.0
                 age_feat = torch.log1p(age_days).unsqueeze(-1)
@@ -539,21 +717,21 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 z = model(n_id, edge_index, edge_attr)
                 z_src = z[[assoc[i] for i in src.tolist()]]
                 z_dst = z[[assoc[i] for i in dst.tolist()]]
-                
                 s_src = model.encode_static(data.x_static[src])
                 s_dst = model.encode_static(data.x_static[dst])
                 
                 with torch.no_grad():
                     # Pass price_emb to predictor
-                    p = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).sigmoid().cpu().numpy()
-                    y = batch.y.cpu().numpy()
-                    preds.extend(p)
-                    targets.extend(y)
+                    pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze()
                     
-                    # Track Transaction Type (Buy=1, Sell=-1)
-                    # msg is [Batch, 3] -> (Amount, Is_Buy, Gap)
-                    is_buy_batch = msg[:, 1].cpu().numpy()
-                    transaction_types.extend(is_buy_batch)
+                    if has_label.sum() > 0:
+                        p = pred_logits[has_label].sigmoid().cpu().numpy()
+                        preds.extend(p.flatten())
+                        targets_batch = batch_targets[has_label].cpu().numpy()
+                        targets.extend(targets_batch)
+                        transaction_types.extend(is_buy[has_label].cpu().numpy())
+                    else:
+                        pass
                 
                 # Update memory for next batch *within* the month
                 model.memory.update_state(src, dst, t, augmented_msg)
@@ -711,4 +889,10 @@ if __name__ == "__main__":
         # Let's hope it aligns.
         pass
 
-    train_and_evaluate(data, df_filtered, num_nodes=num_nodes, num_parties=num_parties, num_states=num_states)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--horizon", type=str, default="1M", help="Return horizon (e.g., 1M, 6M)")
+    parser.add_argument("--alpha", type=float, default=0.0, help="Excess return threshold (e.g., 0.05)")
+    args = parser.parse_args()
+
+    train_and_evaluate(data, df_filtered, args=args, num_nodes=num_nodes, num_parties=num_parties, num_states=num_states)
