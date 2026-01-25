@@ -489,6 +489,9 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 
                 # Report 1: Standard
                 report = classification_report(targets_arr, preds_arr > 0.5, output_dict=True)
+                report['auc'] = auc
+                report['pr_auc'] = pr_auc
+                
                 os.makedirs("results/reports", exist_ok=True)
                 with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
                     json.dump(report, f, indent=4)
@@ -507,7 +510,17 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 # Flip predictions: p -> 1-p for Sells
                 preds_flipped[sell_mask] = 1 - preds_flipped[sell_mask]
                 
+                # Calculate metrics for flipped
+                try:
+                    auc_flipped = roc_auc_score(targets_flipped, preds_flipped)
+                    pr_auc_flipped = average_precision_score(targets_flipped, preds_flipped)
+                except:
+                    auc_flipped = 0.0
+                    pr_auc_flipped = 0.0
+                
                 report_flipped = classification_report(targets_flipped, preds_flipped > 0.5, output_dict=True)
+                report_flipped['auc'] = auc_flipped
+                report_flipped['pr_auc'] = pr_auc_flipped
                 
                 # Print Adjusted Report to log
                 logger.info(f"\n--- Adjusted Classification Report (Stock Direction) for {year}-{month:02d} ---")
