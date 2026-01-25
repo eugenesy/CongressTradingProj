@@ -93,26 +93,6 @@ python scripts/run_ablation.py --full-only --horizon 6M --alpha 0.05
 python scripts/run_ablation.py --full-run
 ```
 
-**All Horizons Sequential (1M, 2M, 3M, 6M, 8M, 12M, 18M, 24M)**
-```bash
-bash scripts/run_all_horizons.sh
-```
-Runs full model for all 8 horizons sequentially (2019-2024, α=0.0). Results saved to `results/experiments/H_{horizon}_A_0.0/`.
-
-## Baseline Model Comparison
-
-Compare TGN against traditional ML models (XGBoost, LightGBM, Random Forest, MLP, Logistic Regression, KNN) using identical features:
-
-```bash
-# Single model
-python baselines/run_baselines.py --horizon 1M --alpha 0.0 --model xgboost
-
-# All models
-python baselines/run_baselines.py --horizon 1M --alpha 0.0 --all
-```
-
-See [`baselines/README.md`](baselines/README.md) for details.
-
 ## Testing
 
 Run unit tests:
