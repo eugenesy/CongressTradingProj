@@ -705,8 +705,8 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                     auc_flipped = roc_auc_score(targets_flipped, preds_flipped)
                     pr_auc_flipped = average_precision_score(targets_flipped, preds_flipped)
                 except:
-                    auc_flipped = 0.0
-                    pr_auc_flipped = 0.0
+                    auc_flipped = None
+                    pr_auc_flipped = None
                 
                 report_flipped = classification_report(targets_flipped, preds_flipped > 0.5, output_dict=True)
                 report_flipped['auc'] = auc_flipped
