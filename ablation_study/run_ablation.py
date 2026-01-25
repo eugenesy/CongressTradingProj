@@ -671,8 +671,8 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 macro_f1 = f1_score(targets_arr, preds_arr > 0.5, average='macro')
                 count = len(preds)
                 
-                os.makedirs("results", exist_ok=True)
-                csv_path = 'results/ablation_monthly_breakdown.csv'
+                # Save to Dynamic Folder
+                csv_path = f"{args.exp_dir}/ablation_monthly_breakdown.csv"
                 with open(csv_path, 'a') as f:
                     if f.tell() == 0:
                         f.write("AblationMode,Year,Month,ROC_AUC,PR_AUC,ACC,F1,Macro_F1,Count\n")
@@ -685,8 +685,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 report['auc'] = auc
                 report['pr_auc'] = pr_auc
                 
-                os.makedirs("results/reports", exist_ok=True)
-                with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
+                with open(f"{args.exp_dir}/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
                     json.dump(report, f, indent=4)
                 
                 logger.info(f"\n--- Classification Report for {year}-{month:02d} ---")
@@ -720,7 +719,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 logger.info("\n" + classification_report(targets_flipped, preds_flipped > 0.5, target_names=['Stock Down', 'Stock Up']))
                 
                 # Save Adjusted Report
-                with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}_flipped.json", "w") as f:
+                with open(f"{args.exp_dir}/reports/report_{ablation_mode}_{year}_{month:02d}_directional.json", "w") as f:
                     json.dump(report_flipped, f, indent=4)
                     
             except Exception as e:
@@ -778,6 +777,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--full-run", action="store_true", help="Run full years")
+    parser.add_argument("--full-only", action="store_true", help="Run ONLY 'full' mode (skip pol_only/mkt_only)")
     parser.add_argument("--horizon", type=str, default="1M", help="Return horizon (e.g., 1M, 6M)")
     parser.add_argument("--alpha", type=float, default=0.0, help="Excess return threshold")
     args_cli = parser.parse_args()
@@ -785,10 +785,23 @@ if __name__ == "__main__":
     target_years = [2019] 
     ablation_modes = ['pol_only', 'mkt_only', 'full']
     
+    if args_cli.full_only:
+        ablation_modes = ['full']
+        logger.info("FULL ONLY MODE: Skipping ablation baselines.")
+    
     if args_cli.full_run:
         target_years = [2019, 2020, 2021, 2022, 2023, 2024]
         logger.info("FULL RUN MODE ACTIVATED")
     
+    # Create Result Directory based on Experiment Settings
+    exp_dir = f"results/experiments/H_{args_cli.horizon}_A_{args_cli.alpha}"
+    os.makedirs(exp_dir, exist_ok=True)
+    os.makedirs(f"{exp_dir}/reports", exist_ok=True)
+    logger.info(f"Saving results to: {exp_dir}")
+    
+    # Store EXP_DIR in args so train_and_evaluate can use it
+    args_cli.exp_dir = exp_dir
+
     for mode in ablation_modes:
         train_and_evaluate(data, df_filtered, target_years=target_years, args=args_cli,
                            num_nodes=num_nodes, num_parties=num_parties, num_states=num_states,
