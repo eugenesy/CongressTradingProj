@@ -21,3 +21,10 @@ results/
 .vscode/
 .idea/
 
+# Proprietary Data Files (DO NOT COMMIT)
+data/parquet/
+data/processed/
+data/raw/*.csv
+*.pt
+*.pkl
+

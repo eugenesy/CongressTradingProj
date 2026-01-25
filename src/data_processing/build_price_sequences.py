@@ -7,10 +7,14 @@ from tqdm import tqdm
 from datetime import timedelta
 
 # Paths
-TRANSACTIONS_PATH = "/data1/user_syeugene/fintech/apple/data/processed/ml_dataset_reduced_attributes.csv"
-STOCK_DATA_DIR = "/data1/user_syeugene/fintech/banana/data/parquet"
-SPY_PATH = "/data1/user_syeugene/fintech/banana/data/parquet/SPY.parquet"
-OUTPUT_PATH = "data/price_sequences.pt"
+import os
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+TRANSACTIONS_PATH = str(PROJECT_ROOT / "data" / "processed" / "ml_dataset_reduced_attributes.csv")
+STOCK_DATA_DIR = str(PROJECT_ROOT / "data" / "parquet")
+SPY_PATH = str(PROJECT_ROOT / "data" / "parquet" / "SPY.parquet")
+OUTPUT_PATH = str(PROJECT_ROOT / "data" / "price_sequences.pt")
 
 # Configuration
 # We use Filing Date as the reference point (when market learns about the trade)
