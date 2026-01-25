@@ -492,6 +492,9 @@ def train_and_evaluate(data, df_filtered, target_years=[2023], num_nodes=None, n
                 os.makedirs("results/reports", exist_ok=True)
                 with open(f"results/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
                     json.dump(report, f, indent=4)
+                
+                logger.info(f"\n--- Classification Report for {year}-{month:02d} ---")
+                logger.info("\n" + classification_report(targets_arr, preds_arr > 0.5, target_names=['Loss', 'Win']))
                     
                 # Report 2: Adjusted (Flipped Sells)
                 sell_mask = (trans_types_arr == -1.0)
