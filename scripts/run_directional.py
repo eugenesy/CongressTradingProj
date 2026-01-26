@@ -1,55 +1,79 @@
 
-import os
-import sys
-import pandas as pd
-import numpy as np
 import torch
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, classification_report
+import datetime
+import sys
+import os
 import logging
 import json
-from tqdm import tqdm
-from sklearn.metrics import classification_report, accuracy_score, f1_score, roc_auc_score, average_precision_score
-import argparse
-from datetime import datetime
-from pathlib import Path
 
 sys.path.append(os.getcwd())
+
+# Import from local directory if possible, or standard path
+# Import from local directory if possible, or standard path
 from src.models_tgn import TGN
+
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
+from sklearn.metrics import average_precision_score
+import matplotlib.pyplot as plt
 
 # --- Logging Setup ---
-logger = logging.getLogger("directional")
+logger = logging.getLogger("ablation")
 logger.setLevel(logging.INFO)
+# Prevent duplicate handlers
 if not logger.handlers:
+    # Console Handler
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
     logger.addHandler(ch)
+    
+    # File Handler
+    os.makedirs("ablation_study/logs", exist_ok=True)
+    fh = logging.FileHandler("ablation_study/logs/ablation_log.txt")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
 
 def get_device():
     return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_nodes=None, num_parties=5, num_states=50,
                        max_epochs=20, patience=5, ablation_mode='full'):
+    """
+    ablation_mode: 'full', 'pol_only', 'mkt_only'
+    """
     device = get_device()
     data = data.to(device)
     
-    logger.info(f"Starting Directional Run: Mode={ablation_mode}, Years={target_years}")
+    results = []
     
+    logger.info(f"Starting Ablation Run: Mode={ablation_mode}, Years={target_years}")
+    
+    # We iterate chronologically through all target months
     for year in target_years:
         for month in range(1, 13):
+            # Define Time Boundaries
             current_period_start = pd.Timestamp(year=year, month=month, day=1)
-            if month == 12: next_period_start = pd.Timestamp(year=year+1, month=1, day=1)
-            else: next_period_start = pd.Timestamp(year=year, month=month+1, day=1)
+            
+            # Next Month Start (for convenient filtering)
+            if month == 12:
+                next_period_start = pd.Timestamp(year=year+1, month=1, day=1)
+            else:
+                next_period_start = pd.Timestamp(year=year, month=month+1, day=1)
             
             train_end = current_period_start - pd.DateOffset(months=1)
             gap_start = train_end
             gap_end = current_period_start
             
-            logger.info(f"\n=== DIRECTIONAL RETRAINING: {year}-{month:02d} | Mode: {ablation_mode} ===")
+            logger.info(f"\n=== RETRAINING For Window: {year}-{month:02d} | Mode: {ablation_mode} ===")
             
-            # Split
+            # 1. Split Indices
             train_mask = df_filtered['Filed'] < gap_start
             gap_mask = (df_filtered['Filed'] >= gap_start) & (df_filtered['Filed'] < gap_end)
             test_mask = (df_filtered['Filed'] >= current_period_start) & (df_filtered['Filed'] < next_period_start)
@@ -58,8 +82,10 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
             gap_idx = np.where(gap_mask)[0]
             test_idx = np.where(test_mask)[0]
             
+            # Slice Bounds
             max_id = len(data.src)
             train_idx = [i for i in train_idx if i < max_id]
+            gap_idx = [i for i in gap_idx if i < max_id]
             test_idx = [i for i in test_idx if i < max_id]
             
             if len(test_idx) == 0:
@@ -67,54 +93,95 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 continue
                 
             train_data = data[train_idx]
-            gap_data = data[[i for i in gap_idx if i < max_id]]
+            gap_data = data[gap_idx]
             test_data = data[test_idx]
             
             logger.info(f"Train: {len(train_data.src)} | Gap: {len(gap_data.src)} | Test: {len(test_data.src)}")
             
-            # Init
+            # 2. INIT MODEL
             model = TGN(
                 num_nodes=num_nodes, raw_msg_dim=4, memory_dim=100, time_dim=100, embedding_dim=100,
                 num_parties=num_parties, num_states=num_states
             ).to(device)
+            
             optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
-            criterion = torch.nn.BCEWithLogitsLoss()
+            
+            # Reset Class Weighting (Let model learn natural dist)
+            # Other fixes (LR, Context, Phase 2) should handle learning.
+            class_weight = torch.tensor([1.0], device=device) 
+            criterion = torch.nn.BCEWithLogitsLoss(pos_weight=class_weight)
+            
             neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
             
-            # Sub-split for Early Stopping
-            sub_train_size = int(len(train_data.src) * 0.9)
-            train_split = train_data[:sub_train_size]
-            val_split = train_data[sub_train_size:]
+            # 3. TRAIN PHASE (With Backprop and Validation)
+            train_size = int(len(train_data.src) * 0.9)
+            val_split_idx = torch.arange(train_size, len(train_data.src))
+            train_split_idx = torch.arange(0, train_size)
             
-            train_loader = TemporalDataLoader(train_split, batch_size=200, drop_last=True)
-            val_loader = TemporalDataLoader(val_split, batch_size=200, drop_last=True)
+            actual_train_data = train_data[train_split_idx]
+            val_data = train_data[val_split_idx]
+            
+            train_loader = TemporalDataLoader(actual_train_data, batch_size=200, drop_last=True)
+            val_loader = TemporalDataLoader(val_data, batch_size=200, drop_last=True)
+            
+            model.train()
             
             min_val_loss = float('inf')
-            best_epoch = 1
-            patience_counter = 0
+            epochs_without_improvement = 0
+            best_epoch = None
             
             for epoch in range(1, max_epochs + 1):
                 model.memory.reset_state()
                 neighbor_loader.reset_state()
-                model.train()
+                model.memory.detach()
                 
-                for batch in train_loader:
+                epoch_losses = []
+                epoch_preds_train = []
+                epoch_targets_train = []
+                
+                # A. Train Loop
+                for batch in tqdm(train_loader, desc=f"Train Ep {epoch}", leave=False):
                     batch = batch.to(device)
-                    model.memory.detach()
                     optimizer.zero_grad()
+                    
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     
-                    # Target: Direction (Return > Alpha)
+                    # --- DYNAMIC LABEL ---
                     horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
                     h_idx = horizon_map.get(args.horizon, 0)
-                    h_seconds = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30) * 86400
+                    h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
+                    # Ensure batch has valid attributes if slicing
+                    # PyG might not slice stored multi-dim tensor attributes by default unless registered correctly or in data.
+                    # But it worked in train_rolling.py.
                     
                     raw_return = batch.y[:, h_idx]
-                    batch_targets = (raw_return > args.alpha).float()
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
                     
-                    # Embedding & Memory logic
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
-                    if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
+                    batch_max_t = t.max()
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    train_mask = is_known & has_label
+                    
+                    if train_mask.sum() == 0:
+                         pass
+                    
+                    # Targets (DIRECTIONAL)
+                    alpha = args.alpha
+                    batch_targets = (raw_return > alpha).float()
+
+                    # --- ABLATION LOGIC: Price Seq ---
+                    if hasattr(batch, 'price_seq'):
+                         price_seq = batch.price_seq
+                    else:
+                         price_seq = torch.zeros((len(src), 14), device=device)
+                    
+                    if ablation_mode == 'pol_only':
+                        price_seq = torch.zeros_like(price_seq)
+
                     price_emb = model.get_price_embedding(price_seq)
                     augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
@@ -122,251 +189,590 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
                     
-                    # History processing
+                    hist_t = data.t[e_id]
                     hist_msg = data.msg[e_id]
-                    hist_price_emb = model.get_price_embedding(data.price_seq[e_id] if ablation_mode != 'pol_only' else torch.zeros_like(data.price_seq[e_id]))
                     
+                    # --- ABLATION LOGIC: Hist Price Seq ---
+                    hist_price_seq = data.price_seq[e_id]
+                    if ablation_mode == 'pol_only':
+                        hist_price_seq = torch.zeros_like(hist_price_seq)
+
+                    hist_price_emb = model.get_price_embedding(hist_price_seq)
+                    
+                    # Dynamic Features (History Masking)
                     hist_raw_returns = data.y[e_id, h_idx]
-                    hist_is_resolved = (data.trade_t[e_id] + h_seconds < t.max()).float().unsqueeze(-1)
-                    hist_targets = (hist_raw_returns > args.alpha).float()
+                    hist_trade_t = data.trade_t[e_id]
+                    hist_resolution = hist_trade_t + h_seconds
+                    
+                    hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                    
+                    hist_is_buy = hist_msg[:, 1]
+                    # Directional Target Logic
+                    hist_targets = (hist_raw_returns > alpha).float()
                     
                     isnan_mask = torch.isnan(hist_raw_returns)
                     hist_is_resolved[isnan_mask] = 0.0
                     hist_targets[isnan_mask] = 0.0
-                    masked_label = hist_targets.unsqueeze(-1) * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                    hist_targets = hist_targets.unsqueeze(-1)
                     
-                    age_feat = torch.log1p((t.max() - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                    rel_t_enc = model.memory.time_enc((model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]).float())
+                    masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                    
+                    age_seconds = (batch_max_t - hist_t).float()
+                    age_days = age_seconds / 86400.0
+                    age_feat = torch.log1p(age_days).unsqueeze(-1)
+                    
+                    target_nodes = n_id[edge_index[1]]
+                    last_update = model.memory.last_update[target_nodes]
+                    rel_t = last_update - hist_t
+                    rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
                     
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
+                    
                     z = model(n_id, edge_index, edge_attr)
+                    z_src = z[[assoc[i] for i in src.tolist()]]
+                    z_dst = z[[assoc[i] for i in dst.tolist()]]
                     
-                    s_src = model.encode_static(data.x_static[src]) if ablation_mode != 'mkt_only' else torch.zeros((len(src), 64), device=device)
-                    s_dst = model.encode_static(data.x_static[dst]) if ablation_mode != 'mkt_only' else torch.zeros((len(dst), 64), device=device)
+                    s_src = model.encode_static(data.x_static[src])
+                    s_dst = model.encode_static(data.x_static[dst])
                     
-                    logits = model.predictor(z[[assoc[i] for i in src.tolist()]], z[[assoc[i] for i in dst.tolist()]], s_src, s_dst, price_emb, price_emb).view(-1)
+                    # --- ABLATION LOGIC: Static Embeddings ---
+                    if ablation_mode == 'mkt_only':
+                        s_src = torch.zeros_like(s_src)
+                        s_dst = torch.zeros_like(s_dst)
                     
-                    mask = ~torch.isnan(raw_return) & (batch.trade_t + h_seconds < t.max())
-                    if mask.sum() > 0:
-                        loss = criterion(logits[mask], batch_targets[mask])
+                    pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
+                    
+                    if train_mask.sum() > 0:
+                        loss = criterion(pred_pos[train_mask].view(-1), batch_targets[train_mask].view(-1))
                         loss.backward()
                         optimizer.step()
+                        epoch_losses.append(loss.item())
                         
+                        with torch.no_grad():
+                            epoch_preds_train.extend(pred_pos[train_mask].sigmoid().cpu().numpy().flatten())
+                            epoch_targets_train.extend(batch_targets[train_mask].cpu().numpy())
+                    else:
+                        pass
+                    
                     model.memory.update_state(src, dst, t, augmented_msg)
                     neighbor_loader.insert(src, dst)
                     model.memory.detach()
-
-                # Validation Loop
+                    
+                # B. Gap Phase
+                gap_loader = TemporalDataLoader(gap_data, batch_size=200)
                 model.eval()
-                val_losses = []
-                with torch.no_grad():
-                    for batch in val_loader:
-                        batch = batch.to(device)
-                        src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                        raw_return = batch.y[:, h_idx]
-                        batch_targets = (raw_return > args.alpha).float()
-                        mask = ~torch.isnan(raw_return) & (batch.trade_t + h_seconds < t.max())
-                        
-                        price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
-                        if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
-                        price_emb = model.get_price_embedding(price_seq)
-                        augmented_msg = torch.cat([msg, price_emb], dim=1)
-                        
-                        n_id = torch.cat([src, dst]).unique()
-                        n_id, edge_index, e_id = neighbor_loader(n_id)
-                        assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
-                        
-                        # (Minimal history logic for val)
-                        hist_msg = data.msg[e_id]
-                        hist_price_emb = model.get_price_embedding(data.price_seq[e_id] if ablation_mode != 'pol_only' else torch.zeros_like(data.price_seq[e_id]))
-                        hist_targets = (data.y[e_id, h_idx] > args.alpha).float()
-                        hist_is_resolved = (data.trade_t[e_id] + h_seconds < t.max()).float().unsqueeze(-1)
-                        masked_label = hist_targets.unsqueeze(-1) * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
-                        age_feat = torch.log1p((t.max() - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                        rel_t_enc = model.memory.time_enc((model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]).float())
-                        
-                        edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
-                        z = model(n_id, edge_index, edge_attr)
-                        s_src = model.encode_static(data.x_static[src]) if ablation_mode != 'mkt_only' else torch.zeros((len(src), 64), device=device)
-                        s_dst = model.encode_static(data.x_static[dst]) if ablation_mode != 'mkt_only' else torch.zeros((len(dst), 64), device=device)
-                        logits = model.predictor(z[[assoc[i] for i in src.tolist()]], z[[assoc[i] for i in dst.tolist()]], s_src, s_dst, price_emb, price_emb).view(-1)
-                        
-                        if mask.sum() > 0:
-                            v_loss = criterion(logits[mask], batch_targets[mask])
-                            val_losses.append(v_loss.item())
-                        model.memory.update_state(src, dst, t, augmented_msg)
-                        neighbor_loader.insert(src, dst)
+                for batch in gap_loader:
+                    batch = batch.to(device)
+                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+                    
+                    if hasattr(batch, 'price_seq'):
+                         price_seq = batch.price_seq
+                    else:
+                         price_seq = torch.zeros((len(src), 14), device=device)
+                         
+                    if ablation_mode == 'pol_only':
+                        price_seq = torch.zeros_like(price_seq)
+
+                    price_emb = model.get_price_embedding(price_seq)
+                    augmented_msg = torch.cat([msg, price_emb], dim=1)
+                    
+                    model.memory.update_state(src, dst, t, augmented_msg)
+                    neighbor_loader.insert(src, dst)
                 
-                cur_val_loss = np.mean(val_losses) if val_losses else 0
-                if cur_val_loss < min_val_loss:
-                    min_val_loss = cur_val_loss
+                # C. Validation
+                val_preds = []
+                val_targets = []
+                val_losses = []
+                for batch in val_loader:
+                    batch = batch.to(device)
+                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+                    
+                    # --- DYNAMIC LABEL ---
+                    # Same logic
+                    horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                    h_idx = horizon_map.get(args.horizon, 0)
+                    h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
+                    raw_return = batch.y[:, h_idx]
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
+                    
+                    batch_max_t = t.max()
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    val_mask = is_known & has_label
+                    
+                    # Targets (DIRECTIONAL)
+                    alpha = args.alpha
+                    batch_targets = (raw_return > alpha).float()
+                    
+                    if hasattr(batch, 'price_seq'):
+                         price_seq = batch.price_seq
+                    else:
+                         price_seq = torch.zeros((len(src), 14), device=device)
+                    if ablation_mode == 'pol_only':
+                        price_seq = torch.zeros_like(price_seq)
+                    
+                    price_emb = model.get_price_embedding(price_seq)
+                    augmented_msg = torch.cat([msg, price_emb], dim=1)
+                    
+                    n_id = torch.cat([src, dst]).unique()
+                    n_id, edge_index, e_id = neighbor_loader(n_id)
+                    
+                    if len(e_id) > 0:
+                        hist_t = data.t[e_id]
+                        hist_msg = data.msg[e_id]
+                        
+                        hist_price_seq = data.price_seq[e_id]
+                        if ablation_mode == 'pol_only':
+                             hist_price_seq = torch.zeros_like(hist_price_seq)
+                        hist_price_emb = model.get_price_embedding(hist_price_seq)
+                        
+                        # Dynamic Masking
+                        hist_raw_returns = data.y[e_id, h_idx]
+                        hist_trade_t = data.trade_t[e_id]
+                        hist_resolution = hist_trade_t + h_seconds
+                        
+                        hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                        
+                        hist_is_buy = hist_msg[:, 1]
+                        # Directional Target Logic
+                        hist_targets = (hist_raw_returns > alpha).float()
+                        
+                        isnan_mask = torch.isnan(hist_raw_returns)
+                        hist_is_resolved[isnan_mask] = 0.0
+                        hist_targets[isnan_mask] = 0.0
+                        hist_targets = hist_targets.unsqueeze(-1)
+                        
+                        masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                        
+                        age_seconds = (batch_max_t - hist_t).float()
+                        age_days = age_seconds / 86400.0
+                        age_feat = torch.log1p(age_days).unsqueeze(-1)
+                        
+                        assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
+                        target_nodes = n_id[edge_index[1]]
+                        last_update = model.memory.last_update[target_nodes]
+                        rel_t = last_update - hist_t
+                        rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
+                        edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
+                        
+                        z = model(n_id, edge_index, edge_attr)
+                        z_src = z[[assoc[i] for i in src.tolist()]]
+                        z_dst = z[[assoc[i] for i in dst.tolist()]]
+                        s_src = model.encode_static(data.x_static[src])
+                        s_dst = model.encode_static(data.x_static[dst])
+                        
+                        if ablation_mode == 'mkt_only':
+                            s_src = torch.zeros_like(s_src)
+                            s_dst = torch.zeros_like(s_dst)
+                        
+                        with torch.no_grad():
+                            pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze(-1)
+                            
+                            if val_mask.sum() > 0:
+                                loss = criterion(pred_logits[val_mask].view(-1), batch_targets[val_mask].view(-1))
+                                val_losses.append(loss.item())
+                                
+                                p = pred_logits[val_mask].sigmoid().cpu().numpy()
+                                val_preds.extend(p.flatten())
+                                val_targets.extend(batch_targets[val_mask].cpu().numpy())
+                            else:
+                                pass
+                    
+                    model.memory.update_state(src, dst, t, augmented_msg)
+                    neighbor_loader.insert(src, dst)
+                
+                avg_loss = np.mean(epoch_losses) if epoch_losses else 0
+                avg_val_loss = np.mean(val_losses) if val_losses else 0
+                val_f1 = f1_score(val_targets, np.array(val_preds) > 0.5) if val_targets else 0
+                
+                logger.debug(f"  Ep {epoch}: Loss={avg_loss:.4f} | Val Loss={avg_val_loss:.4f} | Val F1={val_f1:.4f}")
+                
+                if avg_val_loss < min_val_loss:
+                    min_val_loss = avg_val_loss
+                    epochs_without_improvement = 0
                     best_epoch = epoch
-                    patience_counter = 0
                 else:
-                    patience_counter += 1
-                    if patience_counter >= patience: break
+                    epochs_without_improvement += 1
+                    if epochs_without_improvement >= patience:
+                        logger.info(f"  Early Stop at ep {epoch} (best Val Loss: {min_val_loss:.4f})")
+                        break
+                
+                model.train()
             
-            # RETRAIN (Phase 2)
-            logger.info(f"  Best Epoch: {best_epoch}. Retraining Phase 2...")
-            model = TGN(num_nodes=num_nodes, raw_msg_dim=4, memory_dim=100, time_dim=100, embedding_dim=100,
-                        num_parties=num_parties, num_states=num_states).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
-            neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
+            # --- PHASE 2: RETRAIN FULL ---
+            if best_epoch is None: best_epoch = epoch
+            logger.info(f"  Retraining Phase 2 for {best_epoch} epochs on FULL data")
+            
+            model = TGN(
+                num_nodes=num_nodes, raw_msg_dim=4, memory_dim=100, time_dim=100, embedding_dim=100,
+                num_parties=num_parties, num_states=num_states
+            ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.0005) # Phase 2 uses same LR
+            neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device) # Increased context
             full_train_loader = TemporalDataLoader(train_data, batch_size=200, drop_last=True)
             
-            for ep in range(1, best_epoch + 1):
+            for epoch in range(1, best_epoch + 1):
                 model.memory.reset_state()
                 neighbor_loader.reset_state()
+                model.memory.detach()
                 model.train()
                 for batch in full_train_loader:
                     batch = batch.to(device)
-                    model.memory.detach()
                     optimizer.zero_grad()
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+                    
+                    # --- DYNAMIC LABEL ---
+                    horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                    h_idx = horizon_map.get(args.horizon, 0)
+                    h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                    h_seconds = h_days * 86400
+                    
                     raw_return = batch.y[:, h_idx]
-                    batch_targets = (raw_return > args.alpha).float()
-                    price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                    trade_t = batch.trade_t
+                    resolution_t = trade_t + h_seconds
+                    
+                    batch_max_t = t.max()
+                    
+                    is_known = (resolution_t < batch_max_t)
+                    has_label = ~torch.isnan(raw_return)
+                    train_mask = is_known & has_label
+                    
+                    if train_mask.sum() == 0:
+                         pass
+                    
+                    # Targets (DIRECTIONAL)
+                    alpha = args.alpha
+                    batch_targets = (raw_return > alpha).float()
+                    
+                    if hasattr(batch, 'price_seq'): price_seq = batch.price_seq
+                    else: price_seq = torch.zeros((len(src), 14), device=device)
                     if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
-                    augmented_msg = torch.cat([msg, model.get_price_embedding(price_seq)], dim=1)
+                    price_emb = model.get_price_embedding(price_seq)
+                    augmented_msg = torch.cat([msg, price_emb], dim=1)
                     
                     n_id = torch.cat([src, dst]).unique()
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
+                    hist_t = data.t[e_id]
                     hist_msg = data.msg[e_id]
-                    hist_price_emb = model.get_price_embedding(data.price_seq[e_id] if ablation_mode != 'pol_only' else torch.zeros_like(data.price_seq[e_id]))
-                    hist_targets = (data.y[e_id, h_idx] > args.alpha).float()
-                    hist_is_resolved = (data.trade_t[e_id] + h_seconds < t.max()).float().unsqueeze(-1)
-                    masked_label = hist_targets.unsqueeze(-1) * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
-                    age_feat = torch.log1p((t.max() - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                    rel_t_enc = model.memory.time_enc((model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]).float())
+                    hist_price_seq = data.price_seq[e_id]
+                    if ablation_mode == 'pol_only': hist_price_seq = torch.zeros_like(hist_price_seq)
+                    hist_price_emb = model.get_price_embedding(hist_price_seq)
                     
+                    # Dynamic Masking (History)
+                    hist_raw_returns = data.y[e_id, h_idx]
+                    hist_trade_t = data.trade_t[e_id]
+                    hist_resolution = hist_trade_t + h_seconds
+                    
+                    hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                    
+                    hist_is_buy = hist_msg[:, 1]
+                    hist_targets = torch.zeros_like(hist_raw_returns)
+                    h_buy_mask = (hist_is_buy == 1.0)
+                    hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
+                    h_sell_mask = (hist_is_buy == -1.0)
+                    hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
+                    
+                    isnan_mask = torch.isnan(hist_raw_returns)
+                    hist_is_resolved[isnan_mask] = 0.0
+                    hist_targets[isnan_mask] = 0.0
+                    hist_targets = hist_targets.unsqueeze(-1)
+                    
+                    masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                    
+                    age_seconds = (batch_max_t - hist_t).float()
+                    age_days = age_seconds / 86400.0
+                    age_feat = torch.log1p(age_days).unsqueeze(-1)
+                    
+                    target_nodes = n_id[edge_index[1]]
+                    last_update = model.memory.last_update[target_nodes]
+                    rel_t = last_update - hist_t
+                    rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
-                    z = model(n_id, edge_index, edge_attr)
-                    s_src = model.encode_static(data.x_static[src]) if ablation_mode != 'mkt_only' else torch.zeros((len(src), 64), device=device)
-                    s_dst = model.encode_static(data.x_static[dst]) if ablation_mode != 'mkt_only' else torch.zeros((len(src), 64), device=device)
                     
-                    logits = model.predictor(z[[assoc[i] for i in src.tolist()]], z[[assoc[i] for i in dst.tolist()]], s_src, s_dst, model.get_price_embedding(price_seq), model.get_price_embedding(price_seq)).view(-1)
-                    mask = ~torch.isnan(raw_return) & (batch.trade_t + h_seconds < t.max())
-                    if mask.sum() > 0:
-                        criterion(logits[mask], batch_targets[mask]).backward()
+                    z = model(n_id, edge_index, edge_attr)
+                    z_src = z[[assoc[i] for i in src.tolist()]]
+                    z_dst = z[[assoc[i] for i in dst.tolist()]]
+                    s_src = model.encode_static(data.x_static[src])
+                    s_dst = model.encode_static(data.x_static[dst])
+                    
+                    if ablation_mode == 'mkt_only':
+                        s_src = torch.zeros_like(s_src)
+                        s_dst = torch.zeros_like(s_dst)
+                    
+                    pred_pos = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb)
+                    
+                    if train_mask.sum() > 0:
+                        loss = criterion(pred_pos[train_mask].view(-1), batch_targets[train_mask].view(-1))
+                        loss.backward()
                         optimizer.step()
+                    else:
+                        pass
+                    
                     model.memory.update_state(src, dst, t, augmented_msg)
                     neighbor_loader.insert(src, dst)
                     model.memory.detach()
 
-            # GAP (Update Memory only)
-            gap_loader = TemporalDataLoader(gap_data, batch_size=200)
-            model.eval()
-            for batch in gap_loader:
-                batch = batch.to(device)
-                src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
-                if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
-                augmented_msg = torch.cat([msg, model.get_price_embedding(price_seq)], dim=1)
-                model.memory.update_state(src, dst, t, augmented_msg)
-                neighbor_loader.insert(src, dst)
+                # Phase 2 Gap
+                gap_loader = TemporalDataLoader(gap_data, batch_size=200)
+                model.eval()
+                for batch in gap_loader:
+                    batch = batch.to(device)
+                    src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
+                    if hasattr(batch, 'price_seq'): price_seq = batch.price_seq
+                    else: price_seq = torch.zeros((len(src), 14), device=device)
+                    if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
+                    price_emb = model.get_price_embedding(price_seq)
+                    augmented_msg = torch.cat([msg, price_emb], dim=1)
+                    model.memory.update_state(src, dst, t, augmented_msg)
+                    neighbor_loader.insert(src, dst)
 
-            # TEST
+            # 4. TEST
+            model.eval()
             test_loader = TemporalDataLoader(test_data, batch_size=200)
-            all_preds, all_targets = [], []
+            preds = []
+            targets = []
+            
             for batch in test_loader:
                 batch = batch.to(device)
                 src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
-                raw_return = batch.y[:, h_idx]
-                mask = ~torch.isnan(raw_return)
-                if mask.sum() == 0: continue
                 
-                price_seq = batch.price_seq if hasattr(batch, 'price_seq') else torch.zeros((len(src), 14), device=device)
+                # --- DYNAMIC LABEL ---
+                horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+                h_idx = horizon_map.get(args.horizon, 0)
+                h_days = {'1M':30, '2M':60, '3M':90, '6M':180, '8M':240, '12M':365, '18M':545, '24M':730}.get(args.horizon, 30)
+                h_seconds = h_days * 86400
+                
+                raw_return = batch.y[:, h_idx]
+                trade_t = batch.trade_t
+                resolution_t = trade_t + h_seconds
+                
+                # For Test, we drop NaNs
+                has_label = ~torch.isnan(raw_return)
+                
+                # Targets (DIRECTIONAL)
+                alpha = args.alpha
+                batch_targets = (raw_return > alpha).float()
+                
+                if hasattr(batch, 'price_seq'): price_seq = batch.price_seq
+                else: price_seq = torch.zeros((len(src), 14), device=device)
                 if ablation_mode == 'pol_only': price_seq = torch.zeros_like(price_seq)
-                augmented_msg = torch.cat([msg, model.get_price_embedding(price_seq)], dim=1)
+                
+                price_emb = model.get_price_embedding(price_seq)
+                augmented_msg = torch.cat([msg, price_emb], dim=1)
                 
                 n_id = torch.cat([src, dst]).unique()
                 n_id, edge_index, e_id = neighbor_loader(n_id)
                 assoc = dict(zip(n_id.tolist(), range(n_id.size(0))))
                 
+                hist_t = data.t[e_id]
                 hist_msg = data.msg[e_id]
-                hist_price_emb = model.get_price_embedding(data.price_seq[e_id] if ablation_mode != 'pol_only' else torch.zeros_like(data.price_seq[e_id]))
-                hist_targets = (data.y[e_id, h_idx] > args.alpha).float()
-                hist_is_resolved = (data.trade_t[e_id] + h_seconds < t.max()).float().unsqueeze(-1)
-                masked_label = hist_targets.unsqueeze(-1) * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
-                age_feat = torch.log1p((t.max() - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                rel_t_enc = model.memory.time_enc((model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]).float())
+                hist_price_seq = data.price_seq[e_id]
+                if ablation_mode == 'pol_only': hist_price_seq = torch.zeros_like(hist_price_seq)
+                hist_price_emb = model.get_price_embedding(hist_price_seq)
                 
+                # Dynamic Masking (History)
+                hist_raw_returns = data.y[e_id, h_idx]
+                hist_trade_t = data.trade_t[e_id]
+                hist_resolution = hist_trade_t + h_seconds
+                batch_max_t = t.max()
+                
+                hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
+                
+                hist_is_buy = hist_msg[:, 1]
+                # Directional Target Logic
+                hist_targets = (hist_raw_returns > alpha).float()
+                
+                isnan_mask = torch.isnan(hist_raw_returns)
+                hist_is_resolved[isnan_mask] = 0.0
+                hist_targets[isnan_mask] = 0.0
+                hist_targets = hist_targets.unsqueeze(-1)
+                
+                masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
+                
+                age_seconds = (batch_max_t - hist_t).float()
+                age_days = age_seconds / 86400.0
+                age_feat = torch.log1p(age_days).unsqueeze(-1)
+                
+                target_nodes = n_id[edge_index[1]]
+                last_update = model.memory.last_update[target_nodes]
+                rel_t = last_update - hist_t
+                rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
                 edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price_emb, masked_label, age_feat], dim=-1)
+                
                 z = model(n_id, edge_index, edge_attr)
-                s_src = model.encode_static(data.x_static[src]) if ablation_mode != 'mkt_only' else torch.zeros((len(src), 64), device=device)
-                s_dst = model.encode_static(data.x_static[dst]) if ablation_mode != 'mkt_only' else torch.zeros((len(dst), 64), device=device)
+                z_src = z[[assoc[i] for i in src.tolist()]]
+                z_dst = z[[assoc[i] for i in dst.tolist()]]
+                s_src = model.encode_static(data.x_static[src])
+                s_dst = model.encode_static(data.x_static[dst])
+                
+                if ablation_mode == 'mkt_only':
+                    s_src = torch.zeros_like(s_src)
+                    s_dst = torch.zeros_like(s_dst)
                 
                 with torch.no_grad():
-                    logits = model.predictor(z[[assoc[i] for i in src.tolist()]], z[[assoc[i] for i in dst.tolist()]], s_src, s_dst, model.get_price_embedding(price_seq), model.get_price_embedding(price_seq)).view(-1)
-                    p = logits[mask].sigmoid().cpu().numpy()
-                    all_preds.extend(p.tolist())
-                    all_targets.extend((raw_return[mask] > args.alpha).float().cpu().numpy().tolist())
+                    pred_logits = model.predictor(z_src, z_dst, s_src, s_dst, price_emb, price_emb).squeeze(-1)
+                    
+                    if has_label.sum() > 0:
+                        p = pred_logits[has_label].sigmoid().cpu().numpy()
+                        preds.extend(p.flatten())
+                        targets_batch = batch_targets[has_label].cpu().numpy()
+                        targets.extend(targets_batch)
+                    else:
+                        pass
                 
                 model.memory.update_state(src, dst, t, augmented_msg)
                 neighbor_loader.insert(src, dst)
-
-            # Metrics & Save
-            if all_targets:
-                y_true = np.array(all_targets)
-                y_prob = np.array(all_preds)
+            
+            # --- Save Raw Probabilities (NEW) ---
+            if len(targets) > 0:
+                y_true = np.array(targets)
+                y_prob = np.array(preds)
                 y_pred = (y_prob > 0.5).astype(int)
                 
-                auc = roc_auc_score(y_true, y_prob)
-                acc = accuracy_score(y_true, y_pred)
-                f1 = f1_score(y_true, y_pred)
-                
-                logger.info(f"  [RESULT] {year}-{month:02d}: AUC={auc:.4f} | Acc={acc:.4f}")
-                
-                # Probs
-                probs_dir = f"{args.exp_dir}/probs"
+                probs_dir = f"results/experiments/H_{args.horizon}_A_{args.alpha}/probs"
                 os.makedirs(probs_dir, exist_ok=True)
-                with open(f"{probs_dir}/probs_{ablation_mode}_{year}_{month:02d}.json", 'w') as f:
-                    json.dump({'y_true': y_true.tolist(), 'y_prob': y_prob.tolist()}, f)
                 
-                # Report
-                report_dir = f"{args.exp_dir}/reports"
-                os.makedirs(report_dir, exist_ok=True)
-                rep_dict = classification_report(y_true, y_pred, output_dict=True)
-                rep_dict['auc'] = auc
-                with open(f"{report_dir}/report_{ablation_mode}_{year}_{month:02d}.json", 'w') as f:
-                    json.dump(rep_dict, f, indent=4)
+                probs_output = {
+                    'y_true': y_true.tolist(),
+                    'y_prob': y_prob.tolist(),
+                    'y_pred': y_pred.tolist()
+                }
+                probs_file = f"{probs_dir}/probs_full_{year}_{month:02d}.json"
+                with open(probs_file, 'w') as f:
+                    json.dump(probs_output, f)
+            # ------------------------------------
+
+            # Metrics
+            try:
+                preds_arr = np.array(preds)
+                targets_arr = np.array(targets)
                 
-                # Summary CSV
+                auc = roc_auc_score(targets_arr, preds_arr)
+                pr_auc = average_precision_score(targets_arr, preds_arr)
+                acc = accuracy_score(targets_arr, preds_arr > 0.5)
+                f1 = f1_score(targets_arr, preds_arr > 0.5)
+                macro_f1 = f1_score(targets_arr, preds_arr > 0.5, average='macro')
+                count = len(preds)
+                
+                # Save to Legacy Format (Optional - can be removed if not needed)
+                # csv_path = f"{args.exp_dir}/ablation_monthly_breakdown.csv"
+                # with open(csv_path, 'a') as f:
+                #    if f.tell() == 0:
+                #        f.write("AblationMode,Year,Month,ROC_AUC,PR_AUC,ACC,F1,Macro_F1,Count\n")
+                #    f.write(f"{ablation_mode},{year},{month},{auc:.4f},{pr_auc:.4f},{acc:.4f},{f1:.4f},{macro_f1:.4f},{count}\n")
+                
+                logger.info(f"  [RESULT] Mode={ablation_mode} {year}-{month:02d}: AUC={auc:.4f} | F1={f1:.4f}")
+                
+                # Report: Directional (Standard)
+                report = classification_report(targets_arr, preds_arr > 0.5, output_dict=True)
+                report['auc'] = auc
+                report['pr_auc'] = pr_auc
+                
+                with open(f"{args.exp_dir}/reports/report_{ablation_mode}_{year}_{month:02d}.json", "w") as f:
+                    json.dump(report, f, indent=4)
+                
+                logger.info(f"\n--- Directional Classification Report for {year}-{month:02d} ---")
+                logger.info("\n" + classification_report(targets_arr, preds_arr > 0.5, target_names=['Down', 'Up']))
+                    
+                # Save Summary CSV (Simplified)
                 summary_path = f"{args.exp_dir}/summary_{ablation_mode}.csv"
-                needs_header = not os.path.exists(summary_path)
                 with open(summary_path, 'a') as f:
-                    if needs_header: f.write("Model,Year,Month,Train_Size,Test_Size,Accuracy,F1_Class1,AUC\n")
-                    f.write(f"{ablation_mode},{year},{month},{len(train_data.src)},{len(test_data.src)},{acc:.4f},{f1:.4f},{auc:.4f}\n")
+                    if f.tell() == 0:
+                        f.write("Model,Year,Month,Train_Size,Test_Size,Accuracy,F1_Class1,AUC,PR_AUC\n")
+                    
+                    auc_val = f"{auc:.4f}" if auc is not None else ""
+                    pr_auc_val = f"{pr_auc:.4f}" if pr_auc is not None else ""
+                    
+                    f.write(f"{ablation_mode},{year},{month},{len(train_data.src)},{len(test_data.src)},{acc:.4f},{f1:.4f},{auc_val},{pr_auc_val}\n")
+                    
+            except Exception as e:
+                logger.error(f"Error in metrics: {e}")
+                
+    # Save
+    logger.info("Ablation Run Complete.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--full-run", action="store_true")
-    parser.add_argument("--full-only", action="store_true")
-    parser.add_argument("--horizon", type=str, default="1M")
-    parser.add_argument("--alpha", type=float, default=0.0)
-    parser.add_argument("--year", type=int)
-    args = parser.parse_args()
+    # Load Data
+    data_path = "data/temporal_data.pt"
+    if not os.path.exists(data_path):
+        logger.error(f"Data not found at {data_path}")
+        sys.exit(1)
+        
+    data = torch.load(data_path, weights_only=False)
     
-    args.exp_dir = f"results/directional_tgn/H_{args.horizon}_A_{args.alpha}"
-    os.makedirs(args.exp_dir, exist_ok=True)
+    # Metadata trick
+    if hasattr(data, 'num_nodes'):
+        num_nodes = data.num_nodes
+        del data.num_nodes
+    else: num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
+        
+    if hasattr(data, 'num_parties'): 
+        num_parties = data.num_parties
+        del data.num_parties
+    else: num_parties = 5
+        
+    if hasattr(data, 'num_states'): 
+        num_states = data.num_states
+        del data.num_states
+    else: num_states = 50
     
-    data = torch.load("data/temporal_data.pt", weights_only=False)
-    num_nodes = int(torch.cat([data.src, data.dst]).max()) + 1
+    # Load DF
+    logger.info("Loading CSV...")
     
-    # Remove int attributes to avoid PyG slicing errors
-    if hasattr(data, 'num_nodes'): del data.num_nodes
-    if hasattr(data, 'num_parties'): del data.num_parties
-    if hasattr(data, 'num_states'): del data.num_states
-    
+    # Path workaround for ablation study running from root
     from src.config import TX_PATH
-    df = pd.read_csv(TX_PATH)
-    df['Filed'] = pd.to_datetime(df['Filed'])
-    df = df.sort_values('Filed').reset_index(drop=True)
-    df = df[df['Ticker'].notnull() & df['Filed'].notnull()].reset_index(drop=True)
+    raw_df = pd.read_csv(TX_PATH)
+    raw_df['Traded'] = pd.to_datetime(raw_df['Traded'])
+    raw_df['Filed'] = pd.to_datetime(raw_df['Filed'])
     
-    target_years = [args.year] if args.year else [2019, 2020, 2021, 2022, 2023, 2024]
-    modes = ['full'] if args.full_only else ['pol_only', 'mkt_only', 'full']
+    # Sort by Filed to align with temporal_data.py
+    raw_df = raw_df.sort_values('Filed').reset_index(drop=True)
     
-    for mode in modes:
-        train_and_evaluate(data, df, args=args, target_years=target_years, num_nodes=num_nodes, ablation_mode=mode)
+    # Filter
+    ticker_counts = raw_df['Ticker'].value_counts()
+    valid_tickers = ticker_counts[ticker_counts >= 1].index
+    valid_set = set(valid_tickers)
+    # Also filtered missing 'Filed'
+    mask = raw_df['Ticker'].isin(valid_set) & raw_df['Filed'].notnull()
+    df_filtered = raw_df[mask].reset_index(drop=True)
+    
+    # Parse Args
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--full-run", action="store_true", help="Run full years")
+    parser.add_argument("--full-only", action="store_true", help="Run ONLY 'full' mode (skip pol_only/mkt_only)")
+    parser.add_argument("--horizon", type=str, default="1M", help="Return horizon (e.g., 1M, 6M)")
+    parser.add_argument("--alpha", type=float, default=0.0, help="Excess return threshold")
+    parser.add_argument("--year", type=int, help="Specific year to run (e.g. 2023)")
+    args_cli = parser.parse_args()
+
+    target_years = [2019, 2020, 2021, 2022, 2023, 2024] 
+    ablation_modes = ['pol_only', 'mkt_only', 'full']
+    
+    if args_cli.year:
+        target_years = [args_cli.year]
+        logger.info(f"Targeting specific year: {args_cli.year}")
+    elif args_cli.full_run:
+        target_years = [2019, 2020, 2021, 2022, 2023, 2024]
+        logger.info("FULL RUN MODE ACTIVATED")
+    
+    if args_cli.full_only:
+        ablation_modes = ['full']
+        logger.info("FULL ONLY MODE: Skipping ablation baselines.")
+    
+    args_cli.exp_dir = f"results/directional_tgn/H_{args_cli.horizon}_A_{args_cli.alpha}"
+    os.makedirs(args_cli.exp_dir, exist_ok=True)
+    os.makedirs(f"{args_cli.exp_dir}/reports", exist_ok=True)
+    logger.info(f"Saving results to: {args_cli.exp_dir}")
+    #args_cli.exp_dir = exp_dir # Redundant
+
+    for mode in ablation_modes:
+        train_and_evaluate(data, df_filtered, target_years=target_years, args=args_cli,
+                           num_nodes=num_nodes, num_parties=num_parties, num_states=num_states,
+                           ablation_mode=mode, max_epochs=20 if args_cli.full_run else 1)
+

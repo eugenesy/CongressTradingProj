@@ -413,44 +413,45 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             with open(probs_file, 'w') as f:
                 json.dump(probs_output, f)
 
-            # Compute Standard Report (Win/Loss)
+            # Compute Standard Report
             report_standard = compute_metrics(y_test_winloss, y_pred, y_prob)
             
-            # Compute Directional Report (Flip Sells - matching TGN)
-            # For Sells: flip both targets and predictions
-            trans_types = test_df['Transaction_Type'].values
-            sell_mask = (trans_types == -1.0)
-            
-            # Create flipped versions
-            y_test_dir_flipped = y_test_winloss.copy()
-            y_pred_flipped = y_pred.copy()
-            y_prob_flipped = y_prob.copy()
-            
-            # Flip Sells: 1 -> 0, 0 -> 1
-            y_test_dir_flipped[sell_mask] = 1 - y_test_dir_flipped[sell_mask]
-            y_pred_flipped[sell_mask] = 1 - y_pred_flipped[sell_mask]
-            y_prob_flipped[sell_mask] = 1 - y_prob_flipped[sell_mask]
-            
-            report_directional = compute_metrics(y_test_dir_flipped, y_pred_flipped, y_prob_flipped)
-            
-            # Save JSON reports
-            std_file = out_dir / f"report_{model_name}_{year}_{month:02d}.json"
-            dir_file = out_dir / f"report_{model_name}_{year}_{month:02d}_directional.json"
-            
-            with open(std_file, 'w') as f:
-                json.dump(report_standard, f, indent=4)
-            with open(dir_file, 'w') as f:
-                json.dump(report_directional, f, indent=4)
-            
-            # Helper to safely get F1 Score (handles string/int keys)
+            # Helper to safely get F1 Score
             def get_f1(report):
                 if '1' in report: return report['1']['f1-score']
                 if '1.0' in report: return report['1.0']['f1-score']
                 if 1 in report: return report[1]['f1-score']
                 return 0.0
 
-            f1_score_val = get_f1(report_standard)
-            dir_f1_score_val = get_f1(report_directional)
+            if args.directional:
+                # In directional mode, the "standard" report is the directional one.
+                report_directional = report_standard
+                dir_f1_score_val = get_f1(report_directional)
+                f1_score_val = dir_f1_score_val
+            else:
+                # Compute Directional Report (Legacy flipping)
+                trans_types = test_df['Transaction_Type'].values
+                sell_mask = (trans_types == -1.0)
+                y_test_dir_flipped = y_test_winloss.copy()
+                y_pred_flipped = y_pred.copy()
+                y_prob_flipped = y_prob.copy()
+                y_test_dir_flipped[sell_mask] = 1 - y_test_dir_flipped[sell_mask]
+                y_pred_flipped[sell_mask] = 1 - y_pred_flipped[sell_mask]
+                y_prob_flipped[sell_mask] = 1 - y_prob_flipped[sell_mask]
+                report_directional = compute_metrics(y_test_dir_flipped, y_pred_flipped, y_prob_flipped)
+                f1_score_val = get_f1(report_standard)
+                dir_f1_score_val = get_f1(report_directional)
+
+            # Save JSON reports
+            std_file = out_dir / f"report_{model_name}_{year}_{month:02d}.json"
+            with open(std_file, 'w') as f:
+                json.dump(report_standard, f, indent=4)
+            
+            if not args.directional:
+                 dir_file = out_dir / f"report_{model_name}_{year}_{month:02d}_directional.json"
+                 with open(dir_file, 'w') as f:
+                     json.dump(report_directional, f, indent=4)
+
 
             # Update progress bar with current metrics
             tqdm.write(f"  {year}-{month:02d} | Train: {len(train_df):5d} | Test: {len(test_df):4d} | F1: {f1_score_val:.3f} | AUC: {report_standard.get('auc', 0):.3f}")
