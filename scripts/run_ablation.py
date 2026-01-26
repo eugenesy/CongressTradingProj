@@ -100,13 +100,18 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
             
             # 2. INIT MODEL
             model = TGN(
-                num_nodes=num_nodes, raw_msg_dim=3, memory_dim=100, time_dim=100, embedding_dim=100,
+                num_nodes=num_nodes, raw_msg_dim=4, memory_dim=100, time_dim=100, embedding_dim=100,
                 num_parties=num_parties, num_states=num_states
             ).to(device)
             
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-            criterion = torch.nn.BCEWithLogitsLoss()
-            neighbor_loader = LastNeighborLoader(num_nodes, size=10, device=device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
+            
+            # Reset Class Weighting (Let model learn natural dist)
+            # Other fixes (LR, Context, Phase 2) should handle learning.
+            class_weight = torch.tensor([1.0], device=device) 
+            criterion = torch.nn.BCEWithLogitsLoss(pos_weight=class_weight)
+            
+            neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
             
             # 3. TRAIN PHASE (With Backprop and Validation)
             train_size = int(len(train_data.src) * 0.9)
@@ -419,11 +424,11 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
             logger.info(f"  Retraining Phase 2 for {best_epoch} epochs on FULL data")
             
             model = TGN(
-                num_nodes=num_nodes, raw_msg_dim=3, memory_dim=100, time_dim=100, embedding_dim=100,
+                num_nodes=num_nodes, raw_msg_dim=4, memory_dim=100, time_dim=100, embedding_dim=100,
                 num_parties=num_parties, num_states=num_states
             ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-            neighbor_loader = LastNeighborLoader(num_nodes, size=10, device=device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=0.0005) # Phase 2 uses same LR
+            neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device) # Increased context
             full_train_loader = TemporalDataLoader(train_data, batch_size=200, drop_last=True)
             
             for epoch in range(1, best_epoch + 1):
@@ -656,6 +661,25 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 model.memory.update_state(src, dst, t, augmented_msg)
                 neighbor_loader.insert(src, dst)
             
+            # --- Save Raw Probabilities (NEW) ---
+            if len(targets) > 0:
+                y_true = np.array(targets)
+                y_prob = np.array(preds)
+                y_pred = (y_prob > 0.5).astype(int)
+                
+                probs_dir = f"results/experiments/H_{args.horizon}_A_{args.alpha}/probs"
+                os.makedirs(probs_dir, exist_ok=True)
+                
+                probs_output = {
+                    'y_true': y_true.tolist(),
+                    'y_prob': y_prob.tolist(),
+                    'y_pred': y_pred.tolist()
+                }
+                probs_file = f"{probs_dir}/probs_full_{year}_{month:02d}.json"
+                with open(probs_file, 'w') as f:
+                    json.dump(probs_output, f)
+            # ------------------------------------
+
             # Metrics
             try:
                 preds_arr = np.array(preds)
@@ -795,18 +819,22 @@ if __name__ == "__main__":
     parser.add_argument("--full-only", action="store_true", help="Run ONLY 'full' mode (skip pol_only/mkt_only)")
     parser.add_argument("--horizon", type=str, default="1M", help="Return horizon (e.g., 1M, 6M)")
     parser.add_argument("--alpha", type=float, default=0.0, help="Excess return threshold")
+    parser.add_argument("--year", type=int, help="Specific year to run (e.g. 2023)")
     args_cli = parser.parse_args()
 
-    target_years = [2019] 
+    target_years = [2019, 2020, 2021, 2022, 2023, 2024] 
     ablation_modes = ['pol_only', 'mkt_only', 'full']
+    
+    if args_cli.year:
+        target_years = [args_cli.year]
+        logger.info(f"Targeting specific year: {args_cli.year}")
+    elif args_cli.full_run:
+        target_years = [2019, 2020, 2021, 2022, 2023, 2024]
+        logger.info("FULL RUN MODE ACTIVATED")
     
     if args_cli.full_only:
         ablation_modes = ['full']
         logger.info("FULL ONLY MODE: Skipping ablation baselines.")
-    
-    if args_cli.full_run:
-        target_years = [2019, 2020, 2021, 2022, 2023, 2024]
-        logger.info("FULL RUN MODE ACTIVATED")
     
     # Create Result Directory based on Experiment Settings
     exp_dir = f"results/experiments/H_{args_cli.horizon}_A_{args_cli.alpha}"

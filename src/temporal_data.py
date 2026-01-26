@@ -110,6 +110,27 @@ class TemporalGraphBuilder:
         if os.path.exists("data/price_sequences.pt"):
             print("Loading Price Sequences...")
             price_map = torch.load("data/price_sequences.pt")
+            
+            # --- FILTERING STEP ---
+            # Keep only transactions that exist in price_map
+            print(f"Filtering transactions... Original: {len(self.transactions)}")
+            
+            # Create set of valid IDs
+            valid_ids = set(price_map.keys())
+            
+            # Filter DataFrame
+            # Ensure transaction_id is int
+            self.transactions['transaction_id'] = self.transactions['transaction_id'].fillna(-1).astype(int)
+            mask = self.transactions['transaction_id'].isin(valid_ids)
+            self.transactions = self.transactions[mask].reset_index(drop=True)
+            
+            print(f"Filtered: {len(self.transactions)} (Removed {len(mask)-mask.sum()} missing price seqs)")
+            
+            # Save CLEAN CSV for other scripts (run_ablation.py) to use
+            clean_path = "data/processed/ml_dataset_clean.csv"
+            print(f"Saving filtered dataset to {clean_path}...")
+            self.transactions.to_csv(clean_path, index=False)
+            # ----------------------
         else:
             print("Warning: data/price_sequences.pt not found. Using zero sequences.")
             price_map = {}
@@ -166,6 +187,7 @@ class TemporalGraphBuilder:
             if tid in price_map:
                 p_feat = price_map[tid] # Tensor (14,)
             else:
+                # Should not happen due to filtering, but safe fallback
                 p_feat = torch.zeros((14,), dtype=torch.float32)
             price_seqs.append(p_feat)
             

@@ -20,7 +20,7 @@ PROCESSED_DATA_DIR = PROJECT_ROOT / "data"
 PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
 
 # Key Files
-TX_FILENAME = "ml_dataset_reduced_attributes.csv"
+TX_FILENAME = "ml_dataset_clean.csv"
 TX_PATH = PROCESSED_DATA_DIR / "processed" / TX_FILENAME
 
 PRICE_FILENAME = "all_tickers_historical_data.pkl"

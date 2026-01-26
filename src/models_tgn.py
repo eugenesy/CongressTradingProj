@@ -39,14 +39,15 @@ class LinkPredictor(torch.nn.Module):
     """
     def __init__(self, in_channels):
         super().__init__()
-        # Input size is 2 * in_channels (Src + Dst)
+        # Input size: Src + Dst + (Src * Dst) = 3 * in_channels
         self.net = nn.Sequential(
-            nn.Linear(in_channels * 2, 128),
+            nn.BatchNorm1d(in_channels * 3), # Normalize inputs
+            nn.Linear(in_channels * 3, 128),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),                 # Increased Dropout
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.3),
             nn.Linear(64, 1)
         )
 
@@ -56,11 +57,15 @@ class LinkPredictor(torch.nn.Module):
         h_src = torch.cat([z_src, s_src, p_src], dim=-1)
         h_dst = torch.cat([z_dst, s_dst, p_dst], dim=-1)
         
-        # 2. Concatenate Pair (Interaction)
-        # h_pair: [Batch, In_Channels * 2]
-        h_pair = torch.cat([h_src, h_dst], dim=-1)
+        # 2. Interaction Features
+        # Element-wise product serves as a strong interaction signal
+        h_interact = h_src * h_dst
         
-        # 3. Decode
+        # 3. Concatenate Pair
+        # h_pair: [Batch, In_Channels * 3]
+        h_pair = torch.cat([h_src, h_dst, h_interact], dim=-1)
+        
+        # 4. Decode
         return self.net(h_pair)
 
 
