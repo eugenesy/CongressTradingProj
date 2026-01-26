@@ -13,11 +13,11 @@ from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, classificat
 # Production imports
 sys.path.append(os.getcwd())
 try:
-    from src.gap_tgn import ResearchTGN as GapTGN
+    from src.gap_tgn import ResearchTGN
 except ImportError:
     # Fallback
     sys.path.append(os.path.join(os.getcwd(), '..'))
-    from src.gap_tgn import ResearchTGN as GapTGN
+    from src.gap_tgn import ResearchTGN
 
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
@@ -40,7 +40,7 @@ def direction_targets(raw_return: torch.Tensor, alpha: float) -> Tuple[torch.Ten
     mask = has_label & (up | down)
     return up.float(), mask
 
-def run_2023_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2023, seed=42):
+def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2023, seed=42, out_dir="results/experiments"):
     set_seed(seed)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -86,7 +86,7 @@ def run_2023_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=
     # Schema: [TransactionID, Date, Model, Prob_Up, Pred_Up, True_Up]
     predictions_log = []
     
-    out_path = Path("results/experiments")
+    out_path = Path(out_dir)
     out_path.mkdir(exist_ok=True, parents=True)
 
     from torch_geometric.data import TemporalData
@@ -389,15 +389,17 @@ def main():
     parser.add_argument('--start-year', type=int, default=2023)
     parser.add_argument('--end-year', type=int, default=2023)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--out-dir', default='results/experiments')
     args = parser.parse_args()
 
-    run_2023_study(
+    run_tgn_study(
         horizon=args.horizon,
         alpha=args.alpha,
         epochs=args.epochs,
         start_year=args.start_year,
         end_year=args.end_year,
         seed=args.seed,
+        out_dir=args.out_dir,
     )
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ class TorchMLPClassifier:
             probs = torch.sigmoid(logits).cpu().numpy()
         return np.hstack([1 - probs, probs])
 
-def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023):
+def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, out_dir="results/baselines"):
     # 1. Load Data
     df = pd.read_csv("data/processed/ml_dataset_clean.csv")
     df['Filed'] = pd.to_datetime(df['Filed'])
@@ -255,7 +255,7 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023):
     print(f"LR  MEAN AUC: {res_lr.AUC.mean():.4f}")
     print(f"MLP MEAN AUC: {res_mlp.AUC.mean():.4f}")
     
-    out_path = Path("results/baselines")
+    out_path = Path(out_dir)
     out_path.mkdir(exist_ok=True, parents=True)
     res_xgb.to_csv(out_path / f"baseline_xgb_{horizon}.csv", index=False)
     res_lr.to_csv(out_path / f"baseline_lr_{horizon}.csv", index=False)
@@ -271,12 +271,14 @@ def main():
     parser.add_argument('--alpha', type=float, default=0.0)
     parser.add_argument('--start-year', type=int, default=2023)
     parser.add_argument('--end-year', type=int, default=2023)
+    parser.add_argument('--out-dir', default='results/baselines')
     args = parser.parse_args()
     run_fair_baselines(
         horizon=args.horizon,
         alpha=args.alpha,
         start_year=args.start_year,
         end_year=args.end_year,
+        out_dir=args.out_dir,
     )
 
 if __name__ == "__main__":
