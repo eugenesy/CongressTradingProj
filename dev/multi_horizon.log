@@ -1,0 +1,8 @@
+nohup: ignoring input
+Resuming Multi-Horizon Study (Alpha=0.0, Years=2019-2024)
+Horizons: 3M 6M 8M 12M 18M 24M
+==================================================
+Running Horizon: 3M (Parallel)
+==================================================
+[公曆 20廿六年 一月 廿六日 週一 十八時58分45秒] Launching TGN (3M)...
+[公曆 20廿六年 一月 廿六日 週一 十八時58分45秒] Launching Baselines (3M)...
