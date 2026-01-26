@@ -264,7 +264,7 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023):
     # Save Detailed Logs
     pd.DataFrame(predictions_log).to_csv(out_path / f"predictions_baseline_{horizon}.csv", index=False)
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--horizon', default='6M')
@@ -278,3 +278,6 @@ if __name__ == "__main__":
         start_year=args.start_year,
         end_year=args.end_year,
     )
+
+if __name__ == "__main__":
+    main()

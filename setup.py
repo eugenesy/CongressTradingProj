@@ -9,28 +9,28 @@ with open("requirements.txt", "r", encoding="utf-8") as fh:
 setup(
     name="chocolate-tgn",
     version="0.1.0",
-    author="Your Name",  # TODO: Update with your name
-    author_email="your.email@example.com",  # TODO: Update with your email
+    author="SyEugene",
+    author_email="syeugene@example.com", 
     description="Temporal Graph Network for Congressional Trading Prediction",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/chocolate",  # TODO: Update with your repo URL
+    url="https://github.com/syeugene/chocolate",
     packages=find_packages(),
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Science/Research",
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=requirements,
     entry_points={
         "console_scripts": [
-            "chocolate-train=scripts.run_rolling:main",
-            "chocolate-ablation=scripts.run_ablation:main",
+            "chocolate-train=scripts.train_gap_tgn:main",
+            "chocolate-baselines=scripts.train_baselines:main",
+            "chocolate-build=scripts.build_dataset:main",
         ],
     },
 )

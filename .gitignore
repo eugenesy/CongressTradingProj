@@ -1,33 +1,47 @@
+# Python
 __pycache__/
-*.pyc
-.ipynb_checkpoints/
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Data
-data/raw/
-*.csv
-*.pkl
-*.pt
-*.pth
+# Virtual Environment
+venv/
+env/
+ENV/
+.env
 
-# Logs
-logs/
-ablation_study/logs/
-
-# Results
-results/
-
-# IDE
+# IDEs
 .vscode/
 .idea/
+*.swp
 
-# Proprietary Data Files (DO NOT COMMIT)
+# Project Specific
 data/parquet/
-data/processed/
-data/raw/*.csv
+data/raw/
+data/processed/*.pkl
+data/processed/excess_returns_checkpoint.pkl
+data/processed/closing_price_addition_checkpoint.pkl
+*.log
+dev/results/
+results/
+legacy/ablation_study/logs/
 *.pt
-*.pkl
 
-# Baseline results (generated)
-results/baselines/
-
+# Mac
+.DS_Store

@@ -1,167 +1,60 @@
-# Project Chocolate: Congressional Trading Prediction with TGN
+# GAP-TGN: Graph Alpha Prediction for Congressional Trading
 
-This repository contains the implementation of a Temporal Graph Network (TGN) for predicting excess returns of US Congressperson stock trades.
+**GAP-TGN** is a specialized Temporal Graph Network (TGN) designed to detect alpha signals in congressional trading disclosures. Unlike traditional tabular methods, GAP-TGN explicitly models the evolving network of legislators and corporate entities, using an asynchronous propagation strategy to handle reporting delays.
+
+## Key Features
+*   **Asynchronous Propagation**: Updates node states during "gap" periods using resolved transactions, preventing data staleness.
+*   **Gated Multi-Modal Fusion**: Dynamically weights graph embeddings against immediate market signals.
+*   **Production-Ready Pipeline**: Clean separation of data processing, training, and evaluation.
 
 ## Installation
 
-### 1. Clone the repository
 ```bash
-git clone https://github.com/yourusername/chocolate.git  # TODO: Update with actual repo URL
+# Clone the repository
+git clone https://github.com/syeugene/chocolate.git
 cd chocolate
-```
 
-### 2. Create environment (Conda recommended)
-```bash
-conda env create -f environment.yml
+# Create environment
+conda create -n chocolate python=3.10
 conda activate chocolate
-```
 
-**Alternative (pip):**
-```bash
+# Install dependencies and package
 pip install -r requirements.txt
-```
-
-### 3. Install package in editable mode
-```bash
 pip install -e .
 ```
 
-### 4. Verify installation
+## Usage
+
+### 1. Build Dataset
+Process raw transactions into the temporal graph format.
 ```bash
-python -c "import src; print('Installation successful!')"
+chocolate-build
 ```
+
+### 2. Train GAP-TGN (Proposed Model)
+Train the main graph model on the 2019-2024 dataset.
+```bash
+# Using the installed entry point
+chocolate-train --horizon 6M --epochs 5 --seed 42
+
+# Or directly via python
+python scripts/train_gap_tgn.py --horizon 6M
+```
+
+### 2. Train Baselines (Benchmarking)
+Run comparative baselines (XGBoost, Logistic Regression, MLP) on the same data split.
+```bash
+chocolate-baselines --horizon 6M --start-year 2019 --end-year 2024
+```
+
+### 3. Evaluate Results
+Results are saved to `results/experiments/` and `results/baselines/`.
 
 ## Directory Structure
-
-*   `scripts/`: Executable entry points (`run_rolling.py`, `run_ablation.py`, `build_dataset.py`).
-*   `src/`: Core library code (`temporal_data.py`, `models_tgn.py`, `config.py`, `financial_pipeline/`).
-*   `data/`: Data storage (gitignored - proprietary).
-*   `results/`: Training metrics and evaluation JSON reports (gitignored).
-*   `tests/`: Unit tests (run with `pytest`).
-*   `docs/`: Methodological documentation ([TGN Explainer](docs/TGN_EXPLAINER.md), [Model Overview](docs/MODEL_OVERVIEW.md), [Experiment Log](docs/EXPERIMENT_LOG.md)).
-*   `FUTURE_WORK.md`: Roadmap and Next Steps.
-
-## Data Generation (From Raw Source)
-
-If you need to regenerate the dataset from scratch:
-
-### Prerequisites
-1. Place the raw transaction file (`v5_transactions.csv`) in `data/raw/`.
-2. Ensure you have API access for downloading historical price data (used by the pipeline).
-
-### Run the Pipeline
-```bash
-python scripts/build_dataset.py
-```
-
-This will:
-1. **Download historical price data** for all tickers and SPY → `data/parquet/*.parquet` (~3000 files, ~473MB)
-2. Add benchmark columns, closing prices, and excess returns.
-3. Clean and standardize the data.
-4. Generate `data/processed/ml_dataset_reduced_attributes.csv`.
-5. Build engineered price features → `data/price_sequences.pt`.
-
-**Note**: 
-- This process may take several hours depending on the number of tickers.
-- The parquet files and generated datasets are **proprietary** and excluded from git via `.gitignore`.
-- If you already have the parquet files and processed CSV, you can skip this step.
-
-## Quick Start
-### 1. Build Graph
-```bash
-python src/temporal_data.py
-# Generates data/temporal_data.pt (using Filed Date)
-```
-
-### 2. Rolling Window Evaluation
-Run a standard rolling evaluation (default 1M horizon):
-```bash
-python scripts/run_rolling.py --horizon 1M --alpha 0.0
-```
-
-### 3. Ablation Study
-Run the full ablation study (Politician vs Market Signal) or targeted experiments:
-
-**New: Targeted Experiment (Full Model Only)**
-```bash
-python scripts/run_ablation.py --full-only --horizon 6M --alpha 0.05
-# Results saved to: results/experiments/H_6M_A_0.05/
-```
-
-**Full 3-Way Ablation (2019-2024)**
-```bash
-python scripts/run_ablation.py --full-run
-```
-
-## Testing
-
-Run unit tests:
-```bash
-pytest tests/ -v
-```
-
-### End-to-End Pipeline Test
-
-**Option 1: Quick test (assumes data already exists)**
-```bash
-bash scripts/test_pipeline.sh
-```
-Tests: Temporal graph building → Ablation study (full-only, 1M, α=0.0)
-
-**Option 2: Full test (includes dataset building - takes hours)**
-```bash
-bash scripts/test_full_pipeline.sh
-```
-Tests: Dataset building → Temporal graph → Ablation study
-
-**For tmux:**
-```bash
-# Start a tmux session
-tmux new -s chocolate_test
-
-# Run the test
-bash scripts/test_pipeline.sh
-
-# Detach: Ctrl+B, then D
-# Reattach: tmux attach -t chocolate_test
-```
-
-## Results & Metrics
-*   **Standard Report**: `report_{mode}_{year}_{month}.json`
-*   **Directional Report**: `report_{mode}_{year}_{month}_directional.json` (Interprets "Sell" success as "Stock Up").
-
-## Documentation
-
-- **[TGN Explainer](docs/TGN_EXPLAINER.md)**: Introduction to Temporal Graph Networks
-- **[Model Overview](docs/MODEL_OVERVIEW.md)**: Architecture details
-- **[Experiment Log](docs/EXPERIMENT_LOG.md)**: Complete experiment history
-- **[Future Work](FUTURE_WORK.md)**: Roadmap and planned improvements
-
-## Requirements
-*   Python 3.8+
-*   PyTorch 2.0+, PyTorch Geometric 2.3+
-*   Pandas, NumPy, Matplotlib, Tqdm
-*   See `requirements.txt` or `environment.yml` for full dependencies
-
-## Contributing
-
-<!-- TODO: Add contribution guidelines -->
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+*   `src/gap_tgn.py`: Core TGN model definition.
+*   `scripts/`: Operational scripts for training and evaluation.
+*   `legacy/`: Archived code (ablation studies, old baselines).
+*   `data/`: Data storage (Parquet files are git-ignored).
 
 ## Citation
-
-<!-- TODO: Add BibTeX citation if this is published research -->
-
-## License
-
-<!-- TODO: Add license information -->
-See [LICENSE](LICENSE) for details.
-
-## Troubleshooting
-
-<!-- TODO: Add common issues and solutions -->
-
-**Common Issues:**
-- **Import errors**: Ensure you've installed the package with `pip install -e .`
-- **CUDA errors**: Check PyTorch and CUDA compatibility in `environment.yml`
-- **Missing data**: Run `scripts/build_dataset.py` to generate required files
+If you use this code found in `src/gap_tgn.py`, please cite the accompanying workshop paper.

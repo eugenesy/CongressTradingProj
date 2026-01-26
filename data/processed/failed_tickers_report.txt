@@ -1,0 +1,44 @@
+============================================================
+FAILED TICKERS REPORT
+Generated: 2026-01-25 17:06:16
+============================================================
+
+SUMMARY:
+Total failed: 28
+
+File not found: 28
+
+============================================================
+
+
+FILE NOT FOUND (28 tickers):
+------------------------------------------------------------
+  6697.TWO
+  ASB-PF
+  ATO.PA
+  AZ2.DE
+  BBDUSD
+  BRYN.DE
+  COHN
+  CTM.F
+  EGC
+  FMEGF
+  GFNCP
+  HEI-A
+  HSAQ
+  IBM.NE
+  IDIP.PA
+  LMHA
+  LTD.DE
+  MCX
+  NNDNF
+  NTUS
+  OAK-PB
+  RDSA.AS
+  SPKEP
+  SYSUSD
+  TRXDW
+  VIV.V
+  WFTUF
+  ZNOGW
+
