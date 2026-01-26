@@ -13,6 +13,9 @@ OUT_ROOT=${1:-"results"}
 EXP_DIR="$OUT_ROOT/experiments"
 BASE_DIR="$OUT_ROOT/baselines"
 
+# Ensure directories exist before redirection
+mkdir -p "$EXP_DIR" "$BASE_DIR"
+
 echo "Starting Production Grid Search (Alpha=$ALPHA, Years=$START_YEAR-$END_YEAR)"
 echo "Output Directory: $OUT_ROOT"
 echo "Horizons: ${HORIZONS[*]}"
@@ -24,7 +27,7 @@ for H in "${HORIZONS[@]}"; do
     
     # 1. TGN
     echo "[$(date)] Launching GAP-TGN ($H)..."
-    chocolate-train \
+    python scripts/train_gap_tgn.py \
         --horizon $H \
         --alpha $ALPHA \
         --epochs $EPOCHS \
@@ -36,7 +39,7 @@ for H in "${HORIZONS[@]}"; do
 
     # 2. Baselines
     echo "[$(date)] Launching Baselines ($H)..."
-    chocolate-baselines \
+    python scripts/train_baselines.py \
         --horizon $H \
         --alpha $ALPHA \
         --start-year $START_YEAR \
