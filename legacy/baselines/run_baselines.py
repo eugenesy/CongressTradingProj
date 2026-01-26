@@ -307,7 +307,7 @@ def compute_metrics(y_true, y_pred, y_prob):
     return report
 
 
-def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
+def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float, **kwargs):
     """Run monthly rolling evaluation (matching TGN ablation)."""
     
     print(f"\n{'='*60}")
@@ -348,7 +348,14 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     
     # Create list of all year-month combinations
     year_months = []
-    for year in range(start_year, end_year + 1):
+    # Use specified year if provided, else run full range
+    target_year = kwargs.get('year', None)
+    if target_year:
+        eval_years = [target_year]
+    else:
+        eval_years = range(start_year, end_year + 1)
+        
+    for year in eval_years:
         for month in range(1, 13):
             year_months.append((year, month))
     
@@ -399,7 +406,12 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             y_prob = pipeline.predict_proba(X_test)[:, 1]
             
             # Save raw probabilities (NEW)
-            probs_dir = RESULTS_DIR / f"H_{horizon}_A_{alpha}" / "probs"
+            if df.attrs.get('directional', False):
+                base_dir_probs = PROJECT_ROOT / "results" / "directional_baselines"
+            else:
+                base_dir_probs = RESULTS_DIR
+                
+            probs_dir = base_dir_probs / f"H_{horizon}_A_{alpha}" / "probs"
             probs_dir.mkdir(parents=True, exist_ok=True)
             
             # Convert to list for JSON serialization
@@ -423,7 +435,8 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
                 if 1 in report: return report[1]['f1-score']
                 return 0.0
 
-            if args.directional:
+            is_directional = df.attrs.get('directional', False)
+            if is_directional:
                 # In directional mode, the "standard" report is the directional one.
                 report_directional = report_standard
                 dir_f1_score_val = get_f1(report_directional)
@@ -447,7 +460,7 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             with open(std_file, 'w') as f:
                 json.dump(report_standard, f, indent=4)
             
-            if not args.directional:
+            if not is_directional:
                  dir_file = out_dir / f"report_{model_name}_{year}_{month:02d}_directional.json"
                  with open(dir_file, 'w') as f:
                      json.dump(report_directional, f, indent=4)
@@ -456,7 +469,7 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
             # Update progress bar with current metrics
             tqdm.write(f"  {year}-{month:02d} | Train: {len(train_df):5d} | Test: {len(test_df):4d} | F1: {f1_score_val:.3f} | AUC: {report_standard.get('auc', 0):.3f}")
             
-            all_results.append({
+            res = {
                 'Model': model_name,
                 'Year': year,
                 'Month': month,
@@ -466,10 +479,14 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
                 'F1_Class1': f1_score_val,
                 'AUC': report_standard.get('auc', 0),
                 'PR_AUC': report_standard.get('pr_auc', 0),
-                'Dir_Accuracy': report_directional.get('accuracy', 0),
-                'Dir_F1': dir_f1_score_val,
-                'Dir_AUC': report_directional.get('auc', 0)
-            })
+            }
+            if not is_directional:
+                res.update({
+                    'Dir_Accuracy': report_directional.get('accuracy', 0),
+                    'Dir_F1': dir_f1_score_val,
+                    'Dir_AUC': report_directional.get('auc', 0)
+                })
+            all_results.append(res)
     
     # Save summary CSV
     if 'directional' in df.attrs and df.attrs['directional']:
@@ -482,9 +499,12 @@ def run_monthly_evaluation(df, model_name: str, horizon: str, alpha: float):
     summary_df.to_csv(summary_file, index=False)
     
     print(f"\n{model_name.upper()} Summary:")
-    print(f"  Avg F1 (Win/Loss): {summary_df['F1_Class1'].mean():.4f}")
+    print(f"  Avg F1 (Standard): {summary_df['F1_Class1'].mean():.4f}")
     print(f"  Avg AUC: {summary_df['AUC'].mean():.4f}")
-    print(f"  Avg Directional F1: {summary_df['Dir_F1'].mean():.4f}")
+    
+    if not is_directional:
+        print(f"  Avg Directional F1: {summary_df['Dir_F1'].mean():.4f}")
+        print(f"  Avg Directional AUC: {summary_df['Dir_AUC'].mean():.4f}")
     print(f"  Results saved to: {out_dir}")
     
     return summary_df
@@ -505,6 +525,7 @@ def main():
                         help='Run all models (sweep)')
     parser.add_argument('--directional', action='store_true',
                         help='Use Directional Target (Up/Down) instead of Win/Loss')
+    parser.add_argument('--year', type=int, help='Specific year to run (e.g. 2023)')
     
     args = parser.parse_args()
     
@@ -527,7 +548,7 @@ def main():
     
     all_summaries = []
     for model_name in models:
-        summary = run_monthly_evaluation(df, model_name, args.horizon, args.alpha)
+        summary = run_monthly_evaluation(df, model_name, args.horizon, args.alpha, year=args.year)
         all_summaries.append(summary)
     
     # Combined summary
@@ -544,7 +565,12 @@ def main():
         print("\n" + "="*60)
         print("ALL MODELS SUMMARY")
         print("="*60)
-        print(combined.groupby('Model')[['F1_Class1', 'AUC', 'Dir_F1', 'Dir_AUC']].mean().round(4))
+        
+        summary_cols = ['F1_Class1', 'AUC']
+        if not args.directional:
+            summary_cols += ['Dir_F1', 'Dir_AUC']
+            
+        print(combined.groupby('Model')[summary_cols].mean().round(4))
     
     print("\n✅ Baseline evaluation complete!")
 

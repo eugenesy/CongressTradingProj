@@ -4,8 +4,25 @@ from torch_geometric.nn import TGNMemory, TransformerConv
 from torch_geometric.nn.models.tgn import (
     LastNeighborLoader,
     IdentityMessage,
-    MeanAggregator,  # Changed from LastAggregator for better message aggregation
+    MeanAggregator,
 )
+
+class LearnableMessage(torch.nn.Module):
+    def __init__(self, raw_msg_dim, memory_dim, time_dim):
+        super().__init__()
+        input_dim = memory_dim * 2 + raw_msg_dim + time_dim
+        self.out_channels = memory_dim
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, memory_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(memory_dim, memory_dim),
+        )
+
+    def forward(self, z_src, z_dst, raw_msg, t_enc):
+        # Concatenate everything
+        h = torch.cat([z_src, z_dst, raw_msg, t_enc], dim=-1)
+        return self.mlp(h)
 
 class GraphAttentionEmbedding(torch.nn.Module):
     def __init__(self, in_channels, out_channels, msg_dim, time_enc):
@@ -33,18 +50,28 @@ class GraphAttentionEmbedding(torch.nn.Module):
 
 class LinkPredictor(torch.nn.Module):
     """
-    Deep Interaction Decoder.
-    Concatenates Src and Dst embeddings to learn non-linear interactions
-    (e.g., specific politician types trading specific stock types).
+    Deep Interaction Decoder with Feature Gating.
+    Learnably weights Graph(Politician) vs Price(Market) features.
     """
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, price_dim):
         super().__init__()
-        # Input size: Src + Dst + (Src * Dst) = 3 * in_channels
-        self.net = nn.Sequential(
-            nn.BatchNorm1d(in_channels * 3), # Normalize inputs
-            nn.Linear(in_channels * 3, 128),
+        self.in_channels = in_channels
+        self.price_dim = price_dim
+        
+        # Gating module (Takes Src + Dst + Market context)
+        self.gate = nn.Sequential(
+            nn.Linear(in_channels * 2 + price_dim, 32),
             nn.ReLU(),
-            nn.Dropout(0.3),                 # Increased Dropout
+            nn.Linear(32, 1),
+            nn.Sigmoid()
+        )
+        
+        # Main Decoder
+        self.net = nn.Sequential(
+            nn.BatchNorm1d(in_channels * 2 + price_dim), # Src + Dst + Interaction (using z only)
+            nn.Linear(in_channels * 2 + price_dim, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),                 
             nn.Linear(128, 64),
             nn.ReLU(),
             nn.Dropout(0.3),
@@ -52,21 +79,27 @@ class LinkPredictor(torch.nn.Module):
         )
 
     def forward(self, z_src, z_dst, s_src, s_dst, p_src, p_dst):
-        # 1. Construct Node Embeddings
-        # h: [Batch, In_Channels]
-        h_src = torch.cat([z_src, s_src, p_src], dim=-1)
-        h_dst = torch.cat([z_dst, s_dst, p_dst], dim=-1)
+        # 1. Construct Node Dynamic/Static Embeddings
+        h_src = torch.cat([z_src, s_src], dim=-1)
+        h_dst = torch.cat([z_dst, s_dst], dim=-1)
         
-        # 2. Interaction Features
-        # Element-wise product serves as a strong interaction signal
-        h_interact = h_src * h_dst
+        # Combine src and dst
+        h_graph = torch.cat([h_src, h_dst], dim=-1)
         
-        # 3. Concatenate Pair
-        # h_pair: [Batch, In_Channels * 3]
-        h_pair = torch.cat([h_src, h_dst, h_interact], dim=-1)
+        # 2. Gating Mechanism
+        # s_gate: [Batch, 1]
+        s_gate = self.gate(torch.cat([h_graph, p_src], dim=-1))
         
-        # 4. Decode
-        return self.net(h_pair)
+        # Weight Graph vs Market
+        # Note: We still concat them for the final MLP, but scaling helps the gradient 
+        # prioritize one over the other.
+        h_graph_weighted = h_graph * s_gate
+        h_market_weighted = p_src * (1 - s_gate)
+        
+        h_combined = torch.cat([h_graph_weighted, h_market_weighted], dim=-1)
+        
+        # 3. Decode
+        return self.net(h_combined)
 
 
 class PriceEncoder(torch.nn.Module):
@@ -111,10 +144,10 @@ class TGN(torch.nn.Module):
         # Updates state S_i(t) based on interactions
         self.memory = TGNMemory(
             num_nodes=num_nodes,
-            raw_msg_dim=self.augmented_msg_dim, # INCREASED
+            raw_msg_dim=self.augmented_msg_dim, 
             memory_dim=memory_dim,
             time_dim=time_dim,
-            message_module=IdentityMessage(self.augmented_msg_dim, memory_dim, time_dim), # INCREASED
+            message_module=LearnableMessage(self.augmented_msg_dim, memory_dim, time_dim),
             aggregator_module=MeanAggregator(),
         )
         
@@ -134,9 +167,8 @@ class TGN(torch.nn.Module):
         static_dim = 8 + 8
         
         # 4. Link Predictor
-        # Takes (Dynamic_Emb[100] + Static_Emb[16] + Price_Emb[32])
-        # We also feed the current price context to the decoder
-        self.predictor = LinkPredictor(embedding_dim + static_dim + self.price_emb_dim)
+        # Takes (Dynamic_Emb[100] + Static_Emb[16]) + Price_Emb[32]
+        self.predictor = LinkPredictor(embedding_dim + static_dim, self.price_emb_dim)
 
     def encode_static(self, x_static_idx):
         # x_static_idx: [Batch, 2] (Party, State)

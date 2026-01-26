@@ -106,9 +106,21 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
             
             optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
             
-            # Reset Class Weighting (Let model learn natural dist)
-            # Other fixes (LR, Context, Phase 2) should handle learning.
-            class_weight = torch.tensor([1.0], device=device) 
+            # --- DYNAMIC CLASS WEIGHTING ---
+            horizon_map = {'1M':0, '2M':1, '3M':2, '6M':3, '8M':4, '12M':5, '18M':6, '24M':7}
+            h_idx = horizon_map.get(args.horizon, 0)
+            
+            train_labels_raw = train_data.y[:, h_idx]
+            resolved_mask = ~torch.isnan(train_labels_raw)
+            if resolved_mask.sum() > 0:
+                pos_count = (train_labels_raw[resolved_mask] > args.alpha).sum().item()
+                neg_count = (train_labels_raw[resolved_mask] <= args.alpha).sum().item()
+                pos_weight_val = neg_count / max(1, pos_count)
+            else:
+                pos_weight_val = 1.0
+                
+            class_weight = torch.tensor([pos_weight_val], device=device)
+            logger.info(f"  Dynamic pos_weight: {pos_weight_val:.2f} (Neg/Pos Ratio)")
             criterion = torch.nn.BCEWithLogitsLoss(pos_weight=class_weight)
             
             neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
@@ -122,7 +134,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
             val_data = train_data[val_split_idx]
             
             train_loader = TemporalDataLoader(actual_train_data, batch_size=200, drop_last=True)
-            val_loader = TemporalDataLoader(val_data, batch_size=200, drop_last=True)
+            val_loader = TemporalDataLoader(val_data, batch_size=200, drop_last=False)
             
             model.train()
             
@@ -389,7 +401,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 avg_val_loss = np.mean(val_losses) if val_losses else 0
                 val_f1 = f1_score(val_targets, np.array(val_preds) > 0.5) if val_targets else 0
                 
-                logger.debug(f"  Ep {epoch}: Loss={avg_loss:.4f} | Val Loss={avg_val_loss:.4f} | Val F1={val_f1:.4f}")
+                logger.info(f"  Ep {epoch}: Loss={avg_loss:.4f} | Val Loss={avg_val_loss:.4f} | Val F1={val_f1:.4f}")
                 
                 if avg_val_loss < min_val_loss:
                     min_val_loss = avg_val_loss
@@ -471,11 +483,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                     hist_is_resolved = (hist_resolution < batch_max_t).float().unsqueeze(-1)
                     
                     hist_is_buy = hist_msg[:, 1]
-                    hist_targets = torch.zeros_like(hist_raw_returns)
-                    h_buy_mask = (hist_is_buy == 1.0)
-                    hist_targets[h_buy_mask & (hist_raw_returns > alpha)] = 1.0
-                    h_sell_mask = (hist_is_buy == -1.0)
-                    hist_targets[h_sell_mask & (hist_raw_returns < alpha)] = 1.0
+                    hist_targets = (hist_raw_returns > alpha).float()
                     
                     isnan_mask = torch.isnan(hist_raw_returns)
                     hist_is_resolved[isnan_mask] = 0.0
@@ -634,7 +642,7 @@ def train_and_evaluate(data, df_filtered, args=None, target_years=[2023], num_no
                 y_prob = np.array(preds)
                 y_pred = (y_prob > 0.5).astype(int)
                 
-                probs_dir = f"results/experiments/H_{args.horizon}_A_{args.alpha}/probs"
+                probs_dir = f"{args.exp_dir}/probs"
                 os.makedirs(probs_dir, exist_ok=True)
                 
                 probs_output = {
@@ -749,6 +757,7 @@ if __name__ == "__main__":
     parser.add_argument("--horizon", type=str, default="1M", help="Return horizon (e.g., 1M, 6M)")
     parser.add_argument("--alpha", type=float, default=0.0, help="Excess return threshold")
     parser.add_argument("--year", type=int, help="Specific year to run (e.g. 2023)")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs per window")
     args_cli = parser.parse_args()
 
     target_years = [2019, 2020, 2021, 2022, 2023, 2024] 
@@ -774,5 +783,5 @@ if __name__ == "__main__":
     for mode in ablation_modes:
         train_and_evaluate(data, df_filtered, target_years=target_years, args=args_cli,
                            num_nodes=num_nodes, num_parties=num_parties, num_states=num_states,
-                           ablation_mode=mode, max_epochs=20 if args_cli.full_run else 1)
+                           ablation_mode=mode, max_epochs=args_cli.epochs)
 

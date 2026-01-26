@@ -1,0 +1,3 @@
+[console_scripts]
+chocolate-ablation = scripts.run_ablation:main
+chocolate-train = scripts.run_rolling:main
