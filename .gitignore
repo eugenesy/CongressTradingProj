@@ -42,6 +42,8 @@ dev/results/
 results/
 legacy/ablation_study/logs/
 *.pt
+*.pkl
+*.csv
 
 # Mac
 .DS_Store
