@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(os.getenv("CHOCOLATE_PROJECT_ROOT", PROJECT_ROOT))
 
 # Data Directories
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
-PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed" # Fixed path structure
+PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed"
 PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
 
 # Feature Flags
@@ -35,10 +35,10 @@ COMPANY_FIN_PATH = RAW_DATA_DIR / "sec_quarterly_financials_unzipped.csv"
 CONGRESS_TERMS_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
 
 # Key Files
-TX_FILENAME = "ml_dataset_clean.csv"
+# UPDATED: Now points to the final output of the build pipeline
+TX_FILENAME = "ml_dataset_final.csv"
 TX_PATH = PROCESSED_DATA_DIR / TX_FILENAME
 
-# UPDATED: Price data now comes directly from raw pickle
 PRICE_FILENAME = "all_tickers_historical_data.pkl"
 PRICE_PATH = RAW_DATA_DIR / PRICE_FILENAME
 

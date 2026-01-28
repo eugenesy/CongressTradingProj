@@ -1,173 +1,124 @@
+"""
+Script to build price sequences for the Temporal Graph Network.
+Generates 'data/price_sequences.pt' containing aligned price history tensors.
+"""
 
 import pandas as pd
 import numpy as np
 import torch
-import os
+import pickle
 from tqdm import tqdm
 from datetime import timedelta
+import sys
+import os
 from pathlib import Path
 
-# Paths relative to script directory
-SCRIPT_DIR = Path(__file__).parent
-DATA_DIR = SCRIPT_DIR.parent / "data"
+# Add project root to path to allow imports
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-TRANSACTIONS_PATH = str(DATA_DIR / "processed" / "ml_dataset_reduced_attributes.csv")
-STOCK_DATA_DIR = str(DATA_DIR / "parquet")
-SPY_PATH = str(DATA_DIR / "parquet" / "SPY.parquet")
-OUTPUT_PATH = str(DATA_DIR / "price_sequences.pt")
+from src.config import PRICE_PATH, PROCESSED_DATA_DIR
 
 # Configuration
-# We use Filing Date as the reference point (when market learns about the trade)
-# Features are computed using data BEFORE the Filing Date
-
-def compute_rsi(prices, period=14):
-    """Compute Relative Strength Index."""
-    delta = prices.diff()
-    gain = delta.where(delta > 0, 0.0)
-    loss = -delta.where(delta < 0, 0.0)
-    
-    avg_gain = gain.rolling(window=period, min_periods=period).mean()
-    avg_loss = loss.rolling(window=period, min_periods=period).mean()
-    
-    rs = avg_gain / (avg_loss + 1e-10)
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-def compute_features(df, end_date):
-    """
-    Compute engineered features for a stock/SPY as of end_date.
-    
-    Returns a vector of features:
-    - Return_1d, Return_5d, Return_10d, Return_20d
-    - Volatility_20d
-    - RSI_14
-    - Volume_Ratio (Vol / Avg_Vol_20d)
-    """
-    # Get data up to end_date
-    hist = df.loc[:end_date]
-    
-    if len(hist) < 21:  # Need at least 21 days for 20d features
-        return None
-    
-    close = hist['close']
-    volume = hist['volume']
-    
-    # Returns
-    ret_1d = (close.iloc[-1] / close.iloc[-2] - 1) if len(close) >= 2 else 0
-    ret_5d = (close.iloc[-1] / close.iloc[-6] - 1) if len(close) >= 6 else 0
-    ret_10d = (close.iloc[-1] / close.iloc[-11] - 1) if len(close) >= 11 else 0
-    ret_20d = (close.iloc[-1] / close.iloc[-21] - 1) if len(close) >= 21 else 0
-    
-    # Volatility (Std of daily returns over 20 days)
-    daily_ret = close.pct_change().iloc[-20:]
-    vol_20d = daily_ret.std() if len(daily_ret) >= 10 else 0
-    
-    # RSI
-    rsi_series = compute_rsi(close)
-    rsi_14 = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else 50  # Neutral if missing
-    rsi_14 = rsi_14 / 100.0  # Normalize to [0, 1]
-    
-    # Volume Ratio
-    avg_vol_20d = volume.iloc[-20:].mean()
-    vol_ratio = volume.iloc[-1] / (avg_vol_20d + 1e-10)
-    vol_ratio = np.log1p(vol_ratio)  # Log to compress outliers
-    
-    return np.array([ret_1d, ret_5d, ret_10d, ret_20d, vol_20d, rsi_14, vol_ratio], dtype=np.float32)
+# Fix: Ensure PROCESSED_DATA_DIR is a Path object before using / operator
+TRANSACTIONS_PATH = Path(PROCESSED_DATA_DIR) / "ml_dataset_final.csv"
+OUTPUT_PATH = "data/price_sequences.pt"
+SEQUENCE_LENGTH = 14  # Days of history to encode
 
 def load_data():
+    """Load transactions and historical price data."""
     print(f"Loading transactions from {TRANSACTIONS_PATH}...")
-    df = pd.read_csv(TRANSACTIONS_PATH)
+    if not TRANSACTIONS_PATH.exists():
+        raise FileNotFoundError(f"Transaction file not found: {TRANSACTIONS_PATH}")
     
-    df['Traded'] = pd.to_datetime(df['Traded'])
-    df['Filed'] = pd.to_datetime(df['Filed'])
+    df = pd.read_csv(TRANSACTIONS_PATH, parse_dates=['Filed', 'Traded'])
     
-    df = df.dropna(subset=['Ticker', 'Filed', 'transaction_id'])
-    df['transaction_id'] = df['transaction_id'].astype(int)
-    
-    print(f"Loaded {len(df)} transactions.")
-    return df
+    print(f"Loading historical prices from {PRICE_PATH}...")
+    if not os.path.exists(PRICE_PATH):
+        raise FileNotFoundError(f"Price file not found: {PRICE_PATH}")
+        
+    with open(PRICE_PATH, 'rb') as f:
+        price_data = pickle.load(f)
+        
+    return df, price_data
 
-def load_spy():
-    print(f"Loading SPY data from {SPY_PATH}...")
-    spy_df = pd.read_parquet(SPY_PATH)
-    spy_df.index = pd.to_datetime(spy_df.index)
-    # Ensure required columns
-    for col in ['close', 'volume']:
-        if col not in spy_df.columns:
-            spy_df[col] = 0.0
-    spy_df = spy_df.fillna(0.0)
-    return spy_df
-
-def process_features(df, spy_df):
-    results = {}  # TransactionID -> Tensor (14,) = 7 Stock + 7 SPY features
+def build_sequences(df, price_data):
+    """
+    Construct a tensor of price sequences aligned with transactions.
     
-    grouped = df.groupby('Ticker')
+    Returns:
+        torch.Tensor: Shape (num_transactions, sequence_length)
+    """
+    sequences = {}
     skipped = 0
     
-    print(f"Processing {len(grouped)} unique tickers...")
-    
-    for ticker, group in tqdm(grouped):
-        stock_path = os.path.join(STOCK_DATA_DIR, f"{ticker}.parquet")
-        if not os.path.exists(stock_path):
-            skipped += len(group)
-            continue
-            
-        try:
-            stock_df = pd.read_parquet(stock_path)
-            stock_df.index = pd.to_datetime(stock_df.index)
-            for col in ['close', 'volume']:
-                if col not in stock_df.columns:
-                    stock_df[col] = 0.0
-            stock_df = stock_df.fillna(0.0)
-        except Exception as e:
-            print(f"Error loading {ticker}: {e}")
-            skipped += len(group)
-            continue
-            
-        for _, row in group.iterrows():
-            tid = row['transaction_id']
-            filed_date = row['Filed']
-            
-            if pd.isna(filed_date):
-                continue
-            
-            # Use data up to day BEFORE filing (avoid same-day info)
-            end_date = filed_date - timedelta(days=1)
-            
-            # Compute Stock Features
-            stock_feats = compute_features(stock_df, end_date)
-            if stock_feats is None:
-                continue
-            
-            # Compute SPY Features
-            spy_feats = compute_features(spy_df, end_date)
-            if spy_feats is None:
-                continue
-            
-            # Combine: 7 Stock + 7 SPY = 14 features
-            combined = np.concatenate([stock_feats, spy_feats])
-            
-            # Handle any NaN/Inf
-            combined = np.nan_to_num(combined, nan=0.0, posinf=1.0, neginf=-1.0)
-            
-            results[tid] = torch.tensor(combined, dtype=torch.float32)
+    # Ensure transaction_id exists
+    if 'transaction_id' not in df.columns:
+        print("Warning: 'transaction_id' column missing. Using index.")
+        df['transaction_id'] = df.index + 1
 
-    print(f"Skipped {skipped} due to missing data.")
-    print(f"Generated {len(results)} feature vectors.")
-    return results
+    print(f"Building {SEQUENCE_LENGTH}-day price sequences...")
+    
+    if 'SPY' in price_data:
+        print("Verified: Price data contains SPY benchmark.")
+
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Aligning Prices"):
+        tid = int(row['transaction_id'])
+        ticker = row['Ticker']
+        
+        # Use Traded Date to capture signal leading up to the action
+        ref_date = row['Traded']
+        if pd.isna(ref_date):
+            ref_date = row['Filed']
+            
+        if pd.isna(ticker) or ticker not in price_data:
+            skipped += 1
+            sequences[tid] = torch.zeros(SEQUENCE_LENGTH, dtype=torch.float32)
+            continue
+            
+        hist = price_data[ticker]
+        
+        # Extract sequence
+        seq_values = []
+        current_d = ref_date
+        days_found = 0
+        attempts = 0
+        
+        # Look back up to 45 days to find 14 trading days
+        while days_found < SEQUENCE_LENGTH and attempts < 45:
+            d_str = current_d.strftime('%Y-%m-%d')
+            if d_str in hist:
+                val = hist[d_str].get('changePercent', 0.0)
+                seq_values.insert(0, val)
+                days_found += 1
+            
+            current_d -= timedelta(days=1)
+            attempts += 1
+            
+        # Pad if insufficient data
+        if len(seq_values) < SEQUENCE_LENGTH:
+            padding = [0.0] * (SEQUENCE_LENGTH - len(seq_values))
+            seq_values = padding + seq_values
+            
+        sequences[tid] = torch.tensor(seq_values, dtype=torch.float32)
+
+    print(f"Sequences built. Skipped/Zeroed {skipped} transactions due to missing data.")
+    return sequences
 
 def main():
-    if not os.path.exists("data"):
-        os.makedirs("data")
+    try:
+        df, price_data = load_data()
+        sequences_map = build_sequences(df, price_data)
         
-    df = load_data()
-    spy = load_spy()
-    
-    feat_data = process_features(df, spy)
-    
-    print(f"Saving to {OUTPUT_PATH}...")
-    torch.save(feat_data, OUTPUT_PATH)
-    print("Done.")
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
+        
+        print(f"Saving sequence map to {OUTPUT_PATH}...")
+        torch.save(sequences_map, OUTPUT_PATH)
+        print("✅ Done.")
+        
+    except Exception as e:
+        print(f"❌ Error in build_prices: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
