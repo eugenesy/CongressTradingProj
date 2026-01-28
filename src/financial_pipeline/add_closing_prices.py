@@ -10,7 +10,8 @@ from src.financial_pipeline.utils import load_checkpoint, save_checkpoint, get_d
 # Config - Input: v2, Output: v3
 INPUT_CSV = get_data_path('processed', 'ml_dataset_v2.csv')
 OUTPUT_CSV = get_data_path('processed', 'ml_dataset_v3.csv')
-HIST_PKL = get_data_path('processed', 'all_tickers_historical_data.pkl')
+# UPDATED: Source is now raw directory
+HIST_PKL = get_data_path('raw', 'all_tickers_historical_data.pkl')
 CHECKPOINT_FILE = get_data_path('processed', 'closing_price_checkpoint.pkl')
 CHECKPOINT_INTERVAL = 10000
 CURRENT_DATE = datetime(2025, 5, 21)
@@ -34,7 +35,13 @@ def add_closing_prices_to_transactions(
 ):
     print("Loading data for closing prices...")
     df = pd.read_csv(input_csv, parse_dates=['Filed'])
+    
+    # Load big pickle
+    print(f"Loading historical prices from {hist_pkl}...")
     hist_data = load_checkpoint(hist_pkl)
+    if hist_data is None:
+        raise FileNotFoundError(f"Price data not found at {hist_pkl}")
+
     processed_indices = load_checkpoint(checkpoint_file) or set()
 
     price_cols = [

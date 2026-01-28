@@ -10,7 +10,8 @@ from src.financial_pipeline.utils import load_checkpoint, get_data_path
 # Config - Input: clean, Output: v2
 INPUT_CSV = get_data_path('raw', 'ml_dataset_clean.csv')
 OUTPUT_CSV = get_data_path('processed', 'ml_dataset_v2.csv')
-SPY_PKL = get_data_path('processed', 'spy_historical_data.pkl')
+# UPDATED: Default now points to the big raw pickle
+HIST_PKL = get_data_path('raw', 'all_tickers_historical_data.pkl')
 CURRENT_DATE = datetime(2025, 5, 20)
 
 def _get_spy_price(target_date, spy_data):
@@ -25,12 +26,29 @@ def _get_spy_price(target_date, spy_data):
 def add_spy_columns(
     input_csv=INPUT_CSV,
     output_csv=OUTPUT_CSV,
-    spy_pkl=SPY_PKL,
+    hist_pkl=HIST_PKL, # Renamed argument to reflect source
     current_date=CURRENT_DATE
 ):
-    print("Loading datasets...")
+    print("Loading datasets for SPY Benchmark...")
     df = pd.read_csv(input_csv, parse_dates=['Filed'])
-    spy_data = load_checkpoint(spy_pkl)
+    
+    # Load the full historical data
+    hist_data = load_checkpoint(hist_pkl)
+    if hist_data is None:
+        raise FileNotFoundError(f"Historical data not found at {hist_pkl}")
+
+    # Extract SPY specific data
+    # We check common keys for S&P 500
+    spy_keys = ['SPY', 'spy', 'IVV', 'VOO'] 
+    spy_data = None
+    for k in spy_keys:
+        if k in hist_data:
+            spy_data = hist_data[k]
+            print(f"Found Benchmark data under key: '{k}'")
+            break
+            
+    if spy_data is None:
+        raise ValueError(f"Could not find SPY (or equivalent) in {hist_pkl}. Keys found: {list(hist_data.keys())[:5]}...")
 
     spy_cols = [
         'SPY_TradeDate', 'SPY_1Month', 'SPY_2Months', 'SPY_3Months', 

@@ -16,15 +16,15 @@ PROJECT_ROOT = Path(os.getenv("CHOCOLATE_PROJECT_ROOT", PROJECT_ROOT))
 
 # Data Directories
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
-PROCESSED_DATA_DIR = PROJECT_ROOT / "data"
+PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed" # Fixed path structure
 PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
 
 # Feature Flags
 INCLUDE_IDEOLOGY = True
-INCLUDE_DISTRICT_ECON = False
+INCLUDE_DISTRICT_ECON = True
 INCLUDE_COMMITTEES = True
 INCLUDE_COMPANY_SIC = True
-INCLUDE_COMPANY_FINANCIALS = False
+INCLUDE_COMPANY_FINANCIALS = True
 
 # Specific Data Paths
 IDEOLOGY_PATH = RAW_DATA_DIR / "ideology_scores_quarterly.csv"
@@ -36,8 +36,9 @@ CONGRESS_TERMS_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
 
 # Key Files
 TX_FILENAME = "ml_dataset_clean.csv"
-TX_PATH = PROCESSED_DATA_DIR / "processed" / TX_FILENAME
+TX_PATH = PROCESSED_DATA_DIR / TX_FILENAME
 
+# UPDATED: Price data now comes directly from raw pickle
 PRICE_FILENAME = "all_tickers_historical_data.pkl"
 PRICE_PATH = RAW_DATA_DIR / PRICE_FILENAME
 
