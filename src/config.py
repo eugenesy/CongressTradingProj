@@ -19,6 +19,21 @@ RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DATA_DIR = PROJECT_ROOT / "data"
 PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
 
+# Feature Flags
+INCLUDE_IDEOLOGY = True
+INCLUDE_DISTRICT_ECON = False
+INCLUDE_COMMITTEES = True
+INCLUDE_COMPANY_SIC = True
+INCLUDE_COMPANY_FINANCIALS = False
+
+# Specific Data Paths
+IDEOLOGY_PATH = RAW_DATA_DIR / "ideology_scores_quarterly.csv"
+DISTRICT_ECON_DIR = RAW_DATA_DIR / "district_industries"
+COMMITTEE_PATH = RAW_DATA_DIR / "committee_assignments.csv"
+COMPANY_SIC_PATH = RAW_DATA_DIR / "company_sic_data.csv"
+COMPANY_FIN_PATH = RAW_DATA_DIR / "sec_quarterly_financials_unzipped.csv"
+CONGRESS_TERMS_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
+
 # Key Files
 TX_FILENAME = "ml_dataset_clean.csv"
 TX_PATH = PROCESSED_DATA_DIR / "processed" / TX_FILENAME
@@ -43,3 +58,9 @@ TX_PATH = str(TX_PATH)
 PRICE_PATH = str(PRICE_PATH)
 RESULTS_DIR = str(RESULTS_DIR)
 LOGS_DIR = str(LOGS_DIR)
+IDEOLOGY_PATH = str(IDEOLOGY_PATH)
+DISTRICT_ECON_DIR = str(DISTRICT_ECON_DIR)
+COMMITTEE_PATH = str(COMMITTEE_PATH)
+COMPANY_SIC_PATH = str(COMPANY_SIC_PATH)
+COMPANY_FIN_PATH = str(COMPANY_FIN_PATH)
+CONGRESS_TERMS_PATH = str(CONGRESS_TERMS_PATH)
