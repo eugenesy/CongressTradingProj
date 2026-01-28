@@ -37,25 +37,30 @@ def main():
     processed_dir = get_local_path('processed')
     parquet_dir = get_local_path('parquet')
 
-    # Input: We start with v5_transactions.csv in data/raw/
-    v5_transactions_csv = raw_dir / 'v5_transactions.csv'
+    # --- Pipeline File Sequence ---
+    # Input: Standardize on ml_dataset_clean.csv (provided by user in raw)
+    input_csv = raw_dir / 'ml_dataset_clean.csv'
     
-    # Intermediate and Final Outputs in data/processed/
+    # Intermediate steps
+    ml_v2_csv = processed_dir / 'ml_dataset_v2.csv'  # With SPY columns
+    ml_v3_csv = processed_dir / 'ml_dataset_v3.csv'  # With Closing Prices
+    ml_v4_csv = processed_dir / 'ml_dataset_v4.csv'  # With Excess Returns
+    ml_v5_csv = processed_dir / 'ml_dataset_v5.csv'  # Cleaned (duplicates removed)
+    ml_v6_csv = processed_dir / 'ml_dataset_v6.csv'  # With IDs and standardized sizes
+    
+    # Final Output
+    final_ml_csv = processed_dir / 'ml_dataset_final.csv'
+
+    # Artifacts
     all_tickers_pkl = processed_dir / 'all_tickers_historical_data.pkl'
     failed_tickers_txt = processed_dir / 'failed_tickers_report.txt'
     spy_pkl = processed_dir / 'spy_historical_data.pkl'
     spy_parquet = parquet_dir / 'SPY.parquet'
-    v5_with_benchmark_csv = processed_dir / 'v5_transactions_with_benchmark.csv'
-    v6_transactions_csv = processed_dir / 'v6_transactions.csv'
-    closing_price_checkpoint_pkl = processed_dir / 'closing_price_addition_checkpoint.pkl'
-    v7_transactions_csv = processed_dir / 'v7_transactions.csv'
+    
+    # Checkpoints
+    closing_price_checkpoint_pkl = processed_dir / 'closing_price_checkpoint.pkl'
     excess_returns_checkpoint_pkl = processed_dir / 'excess_returns_checkpoint.pkl'
-    v8_transactions_csv = processed_dir / 'v8_transactions.csv'
-    monthly_label_checkpoint_pkl = processed_dir / 'monthly_label_checkpoint.pkl'
-    v8_cleaned_csv = processed_dir / 'v8_transactions_cleaned.csv'
-    v8_final_cleaned_csv = processed_dir / 'v8_transactions_final_cleaned.csv'
-    v9_transactions_csv = processed_dir / 'v9_transactions.csv'
-    ml_dataset_csv = processed_dir / 'ml_dataset_reduced_attributes.csv'
+    
     price_sequences_pt = SCRIPT_DIR.parent / "data" / "price_sequences.pt"
 
     # Step 1: Download all tickers historical data
@@ -64,7 +69,7 @@ def main():
     else:
         print("Step 1: Downloading tickers...")
         download_all_tickers_historical(
-            csv_file=str(v5_transactions_csv),
+            csv_file=str(input_csv),
             out_pkl=str(all_tickers_pkl),
             failed_report=str(failed_tickers_txt),
             parquet_dir=str(parquet_dir)
@@ -76,74 +81,73 @@ def main():
     else:
         print("Step 2: Downloading SPY...")
         download_spy_historical(
-            input_csv=str(v5_transactions_csv),
+            input_csv=str(input_csv),
             spy_pkl=str(spy_pkl),
             spy_parquet=str(spy_parquet)
         )
 
-    # Step 3: Add SPY columns
-    if v5_with_benchmark_csv.exists():
-        print(f"Skipping Step 3: {v5_with_benchmark_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 3: Add SPY columns (Input -> V2)
+    if ml_v2_csv.exists():
+        print(f"Skipping Step 3: {ml_v2_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
-        print("Step 3: Adding benchmark...")
+        print("Step 3: Adding benchmark columns...")
         add_spy_columns(
-            input_csv=str(v5_transactions_csv),
-            output_csv=str(v5_with_benchmark_csv),
+            input_csv=str(input_csv),
+            output_csv=str(ml_v2_csv),
             spy_pkl=str(spy_pkl)
         )
 
-    # Step 4: Add closing prices
-    if v6_transactions_csv.exists():
-        print(f"Skipping Step 4: {v6_transactions_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 4: Add closing prices (V2 -> V3)
+    if ml_v3_csv.exists():
+        print(f"Skipping Step 4: {ml_v3_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 4: Adding closing prices...")
         add_closing_prices_to_transactions(
-            input_csv=str(v5_with_benchmark_csv),
+            input_csv=str(ml_v2_csv),
             hist_pkl=str(all_tickers_pkl),
-            output_csv=str(v6_transactions_csv),
+            output_csv=str(ml_v3_csv),
             checkpoint_file=str(closing_price_checkpoint_pkl)
         )
 
-    # Step 5: Add excess returns
-    if v7_transactions_csv.exists():
-        print(f"Skipping Step 5: {v7_transactions_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 5: Add excess returns (V3 -> V4)
+    if ml_v4_csv.exists():
+        print(f"Skipping Step 5: {ml_v4_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 5: Adding excess returns...")
         add_excess_returns(
-            input_csv=str(v6_transactions_csv),
-            output_csv=str(v7_transactions_csv),
-            checkpoint_file=str(processed_dir / 'excess_returns_checkpoint.pkl')
+            input_csv=str(ml_v3_csv),
+            output_csv=str(ml_v4_csv),
+            checkpoint_file=str(excess_returns_checkpoint_pkl)
         )
 
-    # Step 6: Clean data (Relinked from v7 after removing Labeling step)
-    if v8_final_cleaned_csv.exists():
-        print(f"Skipping Step 6: {v8_final_cleaned_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 6: Clean data (V4 -> V5)
+    if ml_v5_csv.exists():
+        print(f"Skipping Step 6: {ml_v5_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 6: Cleaning data...")
         clean_transaction_data(
-            input_csv=str(v7_transactions_csv),
-            output_cleaned_csv=str(v8_cleaned_csv),
-            output_final_cleaned_csv=str(v8_final_cleaned_csv)
+            input_csv=str(ml_v4_csv),
+            output_csv=str(ml_v5_csv)
         )
 
-    # Step 7: Add transaction IDs
-    if v9_transactions_csv.exists():
-        print(f"Skipping Step 7: {v9_transactions_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 7: Add transaction IDs (V5 -> V6)
+    if ml_v6_csv.exists():
+        print(f"Skipping Step 7: {ml_v6_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 7: Adding Transaction IDs...")
         add_transaction_ids_and_standardize(
-            input_csv=str(v8_final_cleaned_csv),
-            output_csv=str(v9_transactions_csv)
+            input_csv=str(ml_v5_csv),
+            output_csv=str(ml_v6_csv)
         )
 
-    # Step 8: Create ML dataset
-    if ml_dataset_csv.exists():
-        print(f"Skipping Step 8: {ml_dataset_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    # Step 8: Create ML dataset (V6 -> Final)
+    if final_ml_csv.exists():
+        print(f"Skipping Step 8: {final_ml_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
-        print("Step 8: Creating Final ML Dataset CSV...")
+        print("Step 8: Finalizing ML Dataset columns...")
         create_ml_dataset(
-            input_file=str(v9_transactions_csv),
-            output_file=str(ml_dataset_csv)
+            input_file=str(ml_v6_csv),
+            output_file=str(final_ml_csv)
         )
 
     # Step 9: Build Price Sequences
@@ -151,9 +155,10 @@ def main():
         print(f"Skipping Step 9: {price_sequences_pt.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 9: Building Price Sequences (.pt)...")
-        # Run build_prices.py as a subprocess to keep environments separate if needed
-        # and ensure it uses the local paths
         try:
+            # Note: We pass the *final* CSV to build_prices if it needs it, 
+            # though build_prices.py might look for 'ml_dataset_clean.csv' by default.
+            # We should ensure build_prices.py uses the right file or we rely on config.
             subprocess.run([sys.executable, str(SCRIPT_DIR / "build_prices.py")], check=True)
         except subprocess.CalledProcessError as e:
             print(f"❌ Error building price sequences: {e}")
