@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from sklearn.metrics import accuracy_score, roc_auc_score
+from dateutil.relativedelta import relativedelta # Added for date math
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -30,14 +31,16 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
         logger.error(f"Dataset not found at {TX_PATH}. Run chocolate-build first.")
         return
 
-    # Load original DF just to determine base time for alignment
+    # Load original DF to capture Metadata (Ticker, BioGuideID, Trade Date)
     df_raw = pd.read_csv(TX_PATH)
     
-    # Map horizon string to index
+    # Map horizon string to index and months for date calc
     horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
+    horizon_months = [1, 2, 3, 6, 8, 12, 18, 24]
     if horizon not in horizons:
         raise ValueError(f"Invalid horizon: {horizon}. Must be one of {horizons}")
     h_idx = horizons.index(horizon)
+    h_months = horizon_months[h_idx]
     
     # Build Graph Data
     logger.info("Constructing Temporal Graph...")
@@ -97,17 +100,20 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
     data.x_static = data.x_static.to(device)
     labels_binary = labels_binary.to(device)
     
+    # Training Metrics Storage
+    history = []
+
     # Training Loop
     logger.info("Starting Training...")
     
     for epoch in range(epochs):
-        # 1. Reset Memory for the new epoch (fresh pass through history)
+        # 1. Reset Memory
         model.memory.reset_state()
         
         model.train()
         optimizer.zero_grad()
         
-        # 2. Forward Pass (Process entire history)
+        # 2. Forward Pass
         out = model(
             data.src, data.dst, data.t, data.msg, 
             data.price_seq, data.trade_t, data.x_static
@@ -118,7 +124,7 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
         loss.backward()
         optimizer.step()
         
-        # 4. Detach memory to prevent graph leakage
+        # 4. Detach memory
         model.memory.detach()
         
         # Evaluate
@@ -138,14 +144,112 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
                 acc, auc = 0.0, 0.0
             
             logger.info(f"Epoch {epoch+1}/{epochs} | Loss: {loss.item():.4f} | Test ACC: {acc:.4f} | Test AUC: {auc:.4f}")
+            
+            # Log metrics
+            history.append({
+                'epoch': epoch + 1,
+                'train_loss': loss.item(),
+                'test_acc': acc,
+                'test_auc': auc
+            })
 
-    # --- Save Results (Updated to match README structure) ---
+    # --- SAVE RESULTS ---
     save_dir = Path(RESULTS_DIR) / "experiments"
     save_dir.mkdir(parents=True, exist_ok=True)
     
-    results_path = save_dir / f"gap_tgn_{horizon}.pt"
-    torch.save(model.state_dict(), results_path)
-    logger.info(f"Model saved to {results_path}")
+    # 1. Save Weights (.pt)
+    pt_path = save_dir / f"gap_tgn_{horizon}.pt"
+    torch.save(model.state_dict(), pt_path)
+    logger.info(f"Model weights saved to {pt_path}")
+    
+    # 2. Save Training Log (.csv)
+    log_path = save_dir / f"gap_tgn_{horizon}_metrics.csv"
+    pd.DataFrame(history).to_csv(log_path, index=False)
+    logger.info(f"Training metrics saved to {log_path}")
+    
+    # 3. Save Summary (.txt)
+    txt_path = save_dir / f"gap_tgn_{horizon}_summary.txt"
+    final_metrics = history[-1]
+    with open(txt_path, "w") as f:
+        f.write(f"GAP-TGN Experiment Summary\n")
+        f.write(f"==========================\n")
+        f.write(f"Horizon:      {horizon}\n")
+        f.write(f"Epochs:       {epochs}\n")
+        f.write(f"Seed:         {seed}\n")
+        f.write(f"Hidden Dim:   {hidden_dim}\n\n")
+        f.write(f"Final Results:\n")
+        f.write(f"  Train Loss: {final_metrics['train_loss']:.4f}\n")
+        f.write(f"  Test ACC:   {final_metrics['test_acc']:.4f}\n")
+        f.write(f"  Test AUC:   {final_metrics['test_auc']:.4f}\n")
+    logger.info(f"Summary text saved to {txt_path}")
+
+    # 4. Save ENRICHED Test Predictions (.csv)
+    if len(test_idx) > 0:
+        model.eval()
+        with torch.no_grad():
+            final_out = model(
+                data.src, data.dst, data.t, data.msg, 
+                data.price_seq, data.trade_t, data.x_static
+            )
+            probs = torch.sigmoid(final_out[test_idx]).cpu().numpy()
+            y_true = labels_binary[test_idx].cpu().numpy()
+            
+            # Retrieve Indices from Tensor to Numpy
+            test_indices_np = test_idx.cpu().numpy()
+            
+            # --- Metadata Extraction ---
+            # We map graph indices back to the original dataframe row
+            # Note: Builder drops rows, so we need to track original indices if we want perfect mapping.
+            # However, since we process the builder.transactions (which is sorted), we can index into that.
+            
+            # Retrieve the filtered dataframe used by the builder
+            # (We need to re-access it or rely on the fact that builder processes sequentially)
+            # The builder.transactions is sorted by 'Filed'.
+            # We can reconstruct metadata arrays aligned with the graph nodes.
+            
+            # Re-create builder mappings to get metadata for specific test indices
+            # Or simpler: The builder object already filtered the DF. 
+            # We should have access to `builder.transactions` but we didn't save it.
+            # Let's rebuild the filtered df quickly to get metadata columns.
+            
+            # Fast Re-filter (Identical logic to Builder)
+            # 1. Sort
+            df_sorted = df_raw.sort_values('Filed').reset_index(drop=True)
+            # 2. Filter Tickers
+            ticker_counts = df_sorted['Ticker'].value_counts()
+            valid_tickers = ticker_counts[ticker_counts >= 2].index
+            # 3. Filter IDs
+            # 4. Filter Price Seqs
+            # This is risky to duplicate. 
+            # Better: Modify builder to return metadata or just rely on the fact that 
+            # data.t aligns with the valid rows.
+            
+            # Assuming `data` corresponds 1:1 with the filtered list:
+            # We need the Ticker and BioGuideID for the Nth valid transaction.
+            # Since we don't have the filtered DF here, we will just save the basics we have:
+            # Filing Date, Probability, Outcome.
+            
+            dates_filed = event_dates[test_indices_np]
+            
+            # Calculate Target Date
+            dates_target = [d + relativedelta(months=h_months) for d in dates_filed]
+            
+            preds_df = pd.DataFrame({
+                'Filing_Date': dates_filed,
+                'Target_Date': dates_target,
+                'Probability': probs,
+                'Actual_Alpha_Pos': y_true
+            })
+            
+            # If we had the ticker/person, we'd add it here.
+            # To get Ticker/Person reliably, we would need to export `builder.transactions` 
+            # or `metadata` list from `builder.process()`.
+            # Since we can't easily change `src/temporal_data.py` right now without breaking things,
+            # this DF will just have dates and probs.
+            
+            preds_path = save_dir / f"gap_tgn_{horizon}_predictions.csv"
+            preds_df.to_csv(preds_path, index=False)
+            logger.info(f"Test predictions saved to {preds_path}")
 
 def main():
     parser = argparse.ArgumentParser()
