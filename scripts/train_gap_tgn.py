@@ -11,7 +11,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.gap_tgn import GAPTGN
+from src.gap_tgn import ResearchTGN
 from src.temporal_data import TemporalGraphBuilder
 from src.config import TX_PATH, RESULTS_DIR
 
@@ -101,7 +101,7 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
     # x_static dim is 2 (party, state) -> Embedding needed
     edge_dim = data.msg.shape[1]
     
-    model = GAPTGN(
+    model = ResearchTGN(
         edge_feat_dim=edge_dim,
         price_seq_dim=14,
         hidden_dim=hidden_dim,
