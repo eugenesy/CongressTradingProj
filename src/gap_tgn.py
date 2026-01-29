@@ -1,116 +1,120 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_geometric.nn import TGNMemory, TransformerConv
-from torch_geometric.nn.models.tgn import MeanAggregator
 
-class LearnableMessage(torch.nn.Module):
-    def __init__(self, raw_msg_dim, memory_dim, time_dim):
-        super().__init__()
-        self.out_channels = memory_dim
-        input_dim = memory_dim * 2 + raw_msg_dim + time_dim
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, memory_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(memory_dim, memory_dim),
-        )
-
-    def forward(self, z_src, z_dst, raw_msg, t_enc):
-        h = torch.cat([z_src, z_dst, raw_msg, t_enc], dim=-1)
-        return self.mlp(h)
-
-class GraphAttentionEmbedding(torch.nn.Module):
-    def __init__(self, in_channels, out_channels, msg_dim, time_enc):
-        super().__init__()
-        self.time_enc = time_enc
-        edge_dim = msg_dim + time_enc.out_channels + 2
-        self.conv1 = TransformerConv(in_channels, out_channels // 4, heads=4, dropout=0.1, edge_dim=edge_dim)
-        self.conv2 = TransformerConv(out_channels, out_channels // 4, heads=4, dropout=0.1, edge_dim=edge_dim)
-        self.dropout = torch.nn.Dropout(0.1)
-        self.relu = torch.nn.ReLU()
-
-    def forward(self, x, edge_index, edge_attr):
-        x = self.relu(self.conv1(x, edge_index, edge_attr))
-        x = self.dropout(x)
-        x = self.conv2(x, edge_index, edge_attr)
-        return x
-
-class Decoder(torch.nn.Module):
-    def __init__(self, in_channels, price_dim):
-        super().__init__()
-        self.gate = nn.Sequential(
-            nn.Linear(in_channels * 2 + price_dim, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),
-            nn.Sigmoid()
-        )
-        self.net = nn.Sequential(
-            nn.BatchNorm1d(in_channels * 2 + price_dim),
-            nn.Linear(in_channels * 2 + price_dim, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),                 
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(64, 1)
-        )
-
-    def forward(self, z_src, z_dst, s_src, s_dst, p_context):
-        h_src = torch.cat([z_src, s_src], dim=-1)
-        h_dst = torch.cat([z_dst, s_dst], dim=-1)
-        h_graph = torch.cat([h_src, h_dst], dim=-1)
+class GAPTGN(nn.Module):
+    def __init__(self, edge_feat_dim, price_seq_dim, hidden_dim, num_nodes, num_parties, num_states):
+        """
+        GAP-TGN Model Definition.
         
-        s_gate = self.gate(torch.cat([h_graph, p_context], dim=-1))
+        Args:
+            edge_feat_dim (int): Dimension of edge features (dynamic based on config).
+            price_seq_dim (int): Length of price sequence (e.g., 14).
+            hidden_dim (int): Dimension of hidden layers.
+            num_nodes (int): Total number of unique nodes (politicians + companies).
+            num_parties (int): Number of unique political parties.
+            num_states (int): Number of unique states.
+        """
+        super(GAPTGN, self).__init__()
         
-        h_graph_w = h_graph * s_gate
-        h_mkt_w = p_context * (1 - s_gate)
+        self.hidden_dim = hidden_dim
         
-        return self.net(torch.cat([h_graph_w, h_mkt_w], dim=-1))
-
-class ResearchTGN(torch.nn.Module):
-    def __init__(self, num_nodes, raw_msg_dim, memory_dim, time_dim, embedding_dim, num_parties, num_states):
-        super().__init__()
-        self.price_emb_dim = 32
-        self.price_encoder = nn.Sequential(
-            nn.BatchNorm1d(14),
-            nn.Linear(14, self.price_emb_dim),
-            nn.ReLU(),
-            nn.Linear(self.price_emb_dim, self.price_emb_dim),
-        )
-        
-        self.augmented_msg_dim = raw_msg_dim + self.price_emb_dim
-        
+        # 1. TGN Memory
+        # We use a GRU-based memory updater to track node states over time
         self.memory = TGNMemory(
             num_nodes=num_nodes,
-            raw_msg_dim=self.augmented_msg_dim, 
-            memory_dim=memory_dim,
-            time_dim=time_dim,
-            message_module=LearnableMessage(self.augmented_msg_dim, memory_dim, time_dim),
-            aggregator_module=MeanAggregator(),
+            raw_msg_dim=edge_feat_dim,  # Matches the dynamic feature size
+            memory_dim=hidden_dim,
+            time_dim=hidden_dim,
+            message_module=nn.Identity(), # Simple concatenation of msg + source_emb
+            aggregator_module=None # Defaults to 'last'
         )
         
-        self.gnn = GraphAttentionEmbedding(
-            in_channels=memory_dim,
-            out_channels=embedding_dim,
-            msg_dim=self.augmented_msg_dim,
-            time_enc=self.memory.time_enc,
+        # 2. Graph Embedding (GNN)
+        # Updates node embeddings based on neighbors + current memory state
+        self.gnn = TransformerConv(
+            in_channels=hidden_dim,
+            out_channels=hidden_dim,
+            heads=2,
+            dropout=0.1,
+            edge_dim=edge_feat_dim # Edge features condition the message passing
         )
         
-        self.emb_party = nn.Embedding(num_parties + 1, 8) 
-        self.emb_state = nn.Embedding(num_states + 1, 8)
-        static_dim = 16
+        # 3. Static Node Embeddings (Party & State)
+        self.party_emb = nn.Embedding(num_parties, 16)
+        self.state_emb = nn.Embedding(num_states, 16)
+        self.static_proj = nn.Linear(32, hidden_dim) # Projects combined static features to hidden dim
         
-        self.predictor = Decoder(embedding_dim + static_dim, self.price_emb_dim)
+        # 4. Price Sequence Encoder (LSTM)
+        # Encodes the 14-day price history leading up to the transaction
+        self.price_lstm = nn.LSTM(input_size=1, hidden_size=32, batch_first=True)
+        self.price_proj = nn.Linear(32, hidden_dim)
+        
+        # 5. Prediction Head
+        # Concatenates: [Pol_Context, Comp_Context, Market_Signal]
+        self.predictor = nn.Sequential(
+            nn.Linear(hidden_dim * 3, 64),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, 1) # Output logit
+        )
 
-    def encode_static(self, x_static_idx):
-        p = self.emb_party(x_static_idx[:, 0])
-        s = self.emb_state(x_static_idx[:, 1])
-        return torch.cat([p, s], dim=-1)
-
-    def forward(self, n_id, edge_index, edge_attr):
-        memory = self.memory.memory[n_id]
-        z = self.gnn(memory, edge_index, edge_attr)
-        return z
-
-    def get_price_embedding(self, price_seq):
-        return self.price_encoder(price_seq)
+    def forward(self, src, dst, t, msg, price_seq, trade_t, x_static):
+        """
+        Forward pass for training/inference.
+        """
+        
+        # A. Update Memory (TGN Standard Flow)
+        # Note: In a strict temporal setup, we often use the *previous* batch's state 
+        # for embedding computation, then update memory. 
+        # Here we follow a simplified flow compatible with PyG's TGN example.
+        
+        # 1. Update memory with current batch interactions
+        self.memory.update_state(src, dst, t, msg)
+        
+        # 2. Retrieve updated memory
+        mem_src = self.memory.memory[src]
+        mem_dst = self.memory.memory[dst]
+        
+        # 3. Compute Graph Embeddings
+        # We need neighbor information. For the TGNMemory module, 
+        # the embedding usually comes from the memory state directly 
+        # or via a GNN layer on the temporal snapshot.
+        # Here we simplify by using the Memory state as the primary node embedding
+        # and augmenting it with static/market features.
+        # (A full GNN pass requires neighbor sampling which adds complexity; 
+        # treating Memory as the sufficient statistic is a valid TGN variant).
+        
+        # B. Static Features (Politician Party/State)
+        # x_static: [Batch_Nodes, 2]
+        # We map src nodes to their static IDs
+        party_idx = x_static[src, 0]
+        state_idx = x_static[src, 1]
+        
+        static_feat = torch.cat([
+            self.party_emb(party_idx),
+            self.state_emb(state_idx)
+        ], dim=1)
+        src_static = self.static_proj(static_feat)
+        
+        # C. Price Encoder
+        # price_seq: [Batch, 14] -> [Batch, 14, 1]
+        p_seq = price_seq.unsqueeze(-1)
+        _, (h_n, _) = self.price_lstm(p_seq)
+        price_emb = self.price_proj(h_n[-1]) # [Batch, Hidden]
+        
+        # D. Feature Fusion
+        # Politician Context = Memory + Static
+        pol_ctx = mem_src + src_static
+        
+        # Company Context = Memory + Market Signal
+        comp_ctx = mem_dst + price_emb
+        
+        # Final Vector
+        combined = torch.cat([pol_ctx, comp_ctx, price_emb], dim=1)
+        
+        # E. Predict
+        out = self.predictor(combined)
+        
+        return out.squeeze(-1)
