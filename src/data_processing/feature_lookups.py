@@ -1,265 +1,147 @@
-import torch
-from torch_geometric.data import TemporalData
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
-import os
-import pickle
-from collections import defaultdict
+import torch
+from pathlib import Path
 
-# Import Config and Lookups
-import sys
-# Ensure src is in path
-if __name__ == "__main__":
-    sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+class FeatureLookupBase:
+    def get_vector(self, entity_id, timestamp):
+        raise NotImplementedError
 
-from src.config import (
-    INCLUDE_IDEOLOGY, INCLUDE_DISTRICT_ECON, INCLUDE_COMMITTEES,
-    INCLUDE_COMPANY_SIC, INCLUDE_COMPANY_FINANCIALS,
-    IDEOLOGY_PATH, DISTRICT_ECON_DIR, COMMITTEE_PATH,
-    COMPANY_SIC_PATH, COMPANY_FIN_PATH, CONGRESS_TERMS_PATH
-)
-from src.data_processing.feature_lookups import (
-    TermLookup, IdeologyLookup, DistrictEconLookup, CommitteeLookup,
-    CompanySICLookup, CompanyFinancialsLookup
-)
+class TermLookup:
+    """Helper to map a date to a specific Congress term ID."""
+    def __init__(self, terms_csv_path):
+        self.df = pd.read_csv(terms_csv_path, parse_dates=['start', 'end'], low_memory=False)
+        self.df = self.df.sort_values('start')
 
-class TemporalGraphBuilder:
-    def __init__(self, transactions_df, min_freq=1):
+    def get_term_data(self, bioguide_id, timestamp):
+        """Find the row in terms csv active at timestamp."""
+        date = pd.to_datetime(timestamp, unit='s')
+        
+        # Filter by ID
+        subset = self.df[self.df['id_bioguide'] == bioguide_id]
+        if subset.empty:
+            return None
+            
+        # Filter by Date Range
+        # We look for start <= date <= end
+        # Handle cases where 'end' might be NaN (current term) - assume active
+        mask = (subset['start'] <= date) & ((subset['end'] >= date) | subset['end'].isna())
+        active = subset[mask]
+        
+        if not active.empty:
+            return active.iloc[0]
+        
+        # Fallback: Find closest term if no exact overlap (e.g. gap between terms)
+        # Using the last term that started before this date
+        past = subset[subset['start'] <= date]
+        if not past.empty:
+            return past.iloc[-1]
+            
+        return None
+
+class PoliticianBioLookup(FeatureLookupBase):
+    """
+    Dynamic lookup for Politician Bio Info (Chamber, Party, State, Leadership).
+    """
+    def __init__(self, terms_csv_path, term_lookup=None):
+        if term_lookup:
+            self.term_lookup = term_lookup
+        else:
+            self.term_lookup = TermLookup(terms_csv_path)
+            
+        # Encoding Mappings
+        self.chamber_map = {'rep': 0, 'sen': 1} # 0=House, 1=Senate
+        self.party_map = {'Democrat': 0, 'Republican': 1, 'Independent': 2, 'Libertarian': 3}
+        
+        # State Map (Alphabetical US States)
+        states = [
+            'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD',
+            'MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC',
+            'SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'
+        ]
+        self.state_map = {s: i for i, s in enumerate(states)}
+        
+    def get_vector(self, bioguide_id, timestamp):
         """
-        Builds a TemporalData object from transactions.
+        Returns vector: [Chamber, Party_OneHot(4), State_OneHot(50), Is_Leader]
+        Total Dim: 1 + 4 + 50 + 1 = 56
         """
-        self.transactions = transactions_df.sort_values('Filed').reset_index(drop=True)
-        self.min_freq = min_freq
+        row = self.term_lookup.get_term_data(bioguide_id, timestamp)
         
-        self.pol_id_map = {}
-        self.company_id_map = {}
-        self.party_map = {'Unknown': 0}
-        self.state_map = {'Unknown': 0}
+        # Defaults
+        chamber_val = 0 # Default to House
+        party_vec = [0] * 4 # Default Unknown
+        state_vec = [0] * 50
+        is_leader = 0.0
         
-        self.pol_history = defaultdict(list)
-        
-        self._build_mappings()
-        
-        # --- Initialize Feature Lookups ---
-        self.lookups = {}
-        self._init_feature_lookups()
-        
-    def _build_mappings(self):
-        pols = self.transactions['BioGuideID'].unique()
-        self.pol_id_map = {pid: i for i, pid in enumerate(pols)}
-        print(f"Mapped {len(self.pol_id_map)} Politicians")
-        
-        ticker_counts = self.transactions['Ticker'].value_counts()
-        valid_tickers = ticker_counts[ticker_counts >= self.min_freq].index
-        self.company_id_map = {t: i for i, t in enumerate(valid_tickers)}
-        print(f"Mapped {len(self.company_id_map)} Companies (min_freq={self.min_freq})")
-
-        parties = self.transactions['Party'].fillna('Unknown').unique()
-        for p in parties:
-            if p not in self.party_map: self.party_map[p] = len(self.party_map)
+        if row is not None:
+            # 1. Chamber
+            c_type = str(row.get('type', 'rep')).lower()
+            chamber_val = self.chamber_map.get(c_type, 0)
             
-        states = self.transactions['State'].fillna('Unknown').unique()
-        for s in states:
-            if s not in self.state_map: self.state_map[s] = len(self.state_map)
-            
-    def _init_feature_lookups(self):
-        """Initialize helper classes based on config flags."""
-        print("Initializing Feature Lookups...")
-        
-        # Base Term Lookup (Needed for Geography-based features)
-        if INCLUDE_IDEOLOGY or INCLUDE_DISTRICT_ECON or INCLUDE_COMMITTEES:
-            self.term_lookup = TermLookup(CONGRESS_TERMS_PATH)
-        
-        if INCLUDE_IDEOLOGY:
-            self.lookups['ideology'] = IdeologyLookup(IDEOLOGY_PATH, self.term_lookup)
-            
-        if INCLUDE_DISTRICT_ECON:
-            self.lookups['econ'] = DistrictEconLookup(DISTRICT_ECON_DIR, self.term_lookup)
-            
-        if INCLUDE_COMMITTEES:
-            self.lookups['committee'] = CommitteeLookup(COMMITTEE_PATH, self.term_lookup)
-            
-        if INCLUDE_COMPANY_SIC:
-            self.lookups['sic'] = CompanySICLookup(COMPANY_SIC_PATH)
-            
-        if INCLUDE_COMPANY_FINANCIALS:
-            self.lookups['financials'] = CompanyFinancialsLookup(COMPANY_FIN_PATH)
-
-    def _parse_amount(self, amt_str):
-        if pd.isna(amt_str): return 0.0
-        clean = str(amt_str).replace('$','').replace(',','')
-        try:
-            return float(clean)
-        except:
-            return 0.0
-
-    def process(self):
-        src = []
-        dst = []
-        t = []
-        msg = [] # Edge Features
-        y = []   # Labels
-        resolution_t = []
-        
-        # Static Features
-        num_pols = len(self.pol_id_map)
-        num_comps = len(self.company_id_map)
-        total_nodes = num_pols + num_comps
-        
-        x_static = torch.zeros((total_nodes, 2), dtype=torch.long)
-        
-        # Pre-fill Static Features
-        pol_meta = self.transactions.drop_duplicates('BioGuideID').set_index('BioGuideID')
-        for pid, idx in self.pol_id_map.items():
-            if pid in pol_meta.index:
-                row = pol_meta.loc[pid]
-                if isinstance(row, pd.DataFrame): row = row.iloc[0]
-                party = row.get('Party', 'Unknown')
-                state = row.get('State', 'Unknown')
-                x_static[idx] = torch.tensor([self.party_map.get(party, 0), self.state_map.get(state, 0)])
-
-        # Base Timestamp
-        if len(self.transactions) > 0:
-            base_time = pd.to_datetime(self.transactions['Filed'].min()).timestamp()
-        else:
-            base_time = 0
-            
-        skipped = 0
-        self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
-        self.transactions['Filed_DT'] = pd.to_datetime(self.transactions['Filed'])
-        
-        # Load Price Sequences if available
-        if os.path.exists("data/price_sequences.pt"):
-            print("Loading Price Sequences...")
-            price_map = torch.load("data/price_sequences.pt")
-            valid_ids = set(price_map.keys())
-            self.transactions['transaction_id'] = self.transactions['transaction_id'].fillna(-1).astype(int)
-            mask = self.transactions['transaction_id'].isin(valid_ids)
-            self.transactions = self.transactions[mask].reset_index(drop=True)
-            print(f"Filtered: {len(self.transactions)}")
-            self.transactions.to_csv("data/processed/ml_dataset_clean.csv", index=False)
-        else:
-            print("Warning: data/price_sequences.pt not found. Using zero sequences.")
-            price_map = {}
-            
-        price_seqs = [] 
-
-        for _, row in tqdm(self.transactions.iterrows(), total=len(self.transactions), desc="Building Temporal Events"):
-            pid = row['BioGuideID']
-            ticker = row['Ticker']
-            tid = row.get('transaction_id', -1)
-            
-            if pid not in self.pol_id_map or ticker not in self.company_id_map:
-                skipped += 1
-                continue
-            
-            p_idx = self.pol_id_map[pid]
-            c_idx = self.company_id_map[ticker] + len(self.pol_id_map)
-            
-            src.append(p_idx)
-            dst.append(c_idx)
-            
-            if pd.isna(row['Filed_DT']):
-                skipped += 1
-                continue
+            # 2. Party
+            p_name = str(row.get('party', ''))
+            p_idx = self.party_map.get(p_name, -1)
+            if p_idx >= 0:
+                party_vec[p_idx] = 1.0
                 
-            # Event Time
-            event_ts = row['Filed_DT'].timestamp()
-            ts_norm = event_ts - base_time
-            t.append(int(ts_norm))
-            
-            # --- Base Edge Features ---
-            amt = np.log1p(self._parse_amount(row['Trade_Size_USD']))
-            is_buy = 1.0 if 'Purchase' in str(row['Transaction']) else -1.0
-            gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days) if pd.notnull(row['Traded_DT']) else 30
-            gap_feat = np.log1p(gap_days)
-            
-            feat_vec = [amt, is_buy, gap_feat]
-            
-            # --- Append Configurable Features ---
-            # IMPORTANT: We pass 'event_ts' (absolute timestamp) to lookups, not normalized 'ts_norm'
-            
-            # 1. Ideology (Politician)
-            if INCLUDE_IDEOLOGY:
-                vec = self.lookups['ideology'].get_vector(pid, event_ts)
-                feat_vec.extend(vec.tolist())
+            # 3. State
+            s_name = str(row.get('state', ''))
+            s_idx = self.state_map.get(s_name, -1)
+            if s_idx >= 0:
+                state_vec[s_idx] = 1.0
                 
-            # 2. District Econ (Politician)
-            if INCLUDE_DISTRICT_ECON:
-                vec = self.lookups['econ'].get_vector(pid, event_ts)
-                feat_vec.extend(vec.tolist())
+            # 4. Leadership
+            # 'leadership_roles' column is often null if none. If present, it's a list/string.
+            roles = row.get('leadership_roles', None)
+            if pd.notnull(roles) and str(roles).strip() != '[]':
+                is_leader = 1.0
+                
+        # Construct Tensor
+        # Chamber (1) + Party (4) + State (50) + Leader (1)
+        final = [float(chamber_val)] + party_vec + state_vec + [is_leader]
+        return np.array(final, dtype=np.float32)
 
-            # 3. Committees (Politician)
-            if INCLUDE_COMMITTEES:
-                vec = self.lookups['committee'].get_vector(pid, event_ts)
-                feat_vec.extend(vec.tolist())
-                
-            # 4. SIC (Company)
-            if INCLUDE_COMPANY_SIC:
-                vec = self.lookups['sic'].get_vector(ticker, event_ts)
-                feat_vec.extend(vec.tolist())
-                
-            # 5. Financials (Company)
-            if INCLUDE_COMPANY_FINANCIALS:
-                vec = self.lookups['financials'].get_vector(ticker, event_ts)
-                feat_vec.extend(vec.tolist())
-            
-            msg.append(feat_vec)
-            
-            # --- Price Features ---
-            if tid in price_map:
-                p_feat = price_map[tid]
-            else:
-                p_feat = torch.zeros((14,), dtype=torch.float32)
-            price_seqs.append(p_feat)
-            
-            # --- Labels ---
-            horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
-            labels_multi = []
-            for h in horizons:
-                labels_multi.append(row.get(f'Excess_Return_{h}', float('nan')))
-            y.append(labels_multi)
-            
-            if pd.notnull(row['Traded_DT']):
-                trade_ts = row['Traded_DT'].timestamp() - base_time
-            else:
-                trade_ts = ts_norm - (30*86400)
-            resolution_t.append(int(trade_ts))
-            
-        print(f"Skipped {skipped} transactions.")
+class IdeologyLookup(FeatureLookupBase):
+    def __init__(self, ideology_csv_path, term_lookup):
+        self.df = pd.read_csv(ideology_csv_path)
+        self.term_lookup = term_lookup
         
-        # Convert msg to tensor
-        msg_tensor = torch.tensor(msg, dtype=torch.float)
-        print(f"Final Message Dimension: {msg_tensor.shape[1]}")
-        
-        data = TemporalData(
-            src=torch.tensor(src, dtype=torch.long),
-            dst=torch.tensor(dst, dtype=torch.long),
-            t=torch.tensor(t, dtype=torch.long),
-            msg=msg_tensor,
-            y=torch.tensor(y, dtype=torch.float)
-        )
-        
-        if price_seqs:
-            data.price_seq = torch.stack(price_seqs)
-        else:
-            data.price_seq = torch.zeros((len(src), 14))
-        
-        data.trade_t = torch.tensor(resolution_t, dtype=torch.long)
-        data.num_nodes = total_nodes
-        data.x_static = x_static
-        
-        return data
+    def get_vector(self, bioguide_id, timestamp):
+        # Placeholder for actual ideology lookup logic
+        # Assuming 2 dimensions: dim1, dim2
+        return np.array([0.0, 0.0], dtype=np.float32)
 
-if __name__ == "__main__":
-    from src.config import TX_PATH
-    if os.path.exists(TX_PATH):
-        df = pd.read_csv(TX_PATH)
-        builder = TemporalGraphBuilder(df)
-        data = builder.process()
-        print(data)
-        os.makedirs("data", exist_ok=True)
-        torch.save(data, "data/temporal_data.pt")
-    else:
-        print(f"Transaction file not found at {TX_PATH}")
+class DistrictEconLookup(FeatureLookupBase):
+    def __init__(self, district_dir, term_lookup):
+        self.term_lookup = term_lookup
+    
+    def get_vector(self, bioguide_id, timestamp):
+        # Placeholder: Census data (Median Income, Unemployment, etc.)
+        # Returning dummy 5-dim vector
+        return np.zeros(5, dtype=np.float32)
+
+class CommitteeLookup(FeatureLookupBase):
+    def __init__(self, committee_csv_path, term_lookup):
+        self.term_lookup = term_lookup
+        
+    def get_vector(self, bioguide_id, timestamp):
+        # Placeholder: Committee assignments (Finance, Intel, etc.)
+        # Returning dummy 10-dim vector (one-hot top committees)
+        return np.zeros(10, dtype=np.float32)
+
+class CompanySICLookup(FeatureLookupBase):
+    def __init__(self, sic_csv_path):
+        pass
+        
+    def get_vector(self, ticker, timestamp):
+        # Placeholder: Sector/Industry embedding
+        return np.zeros(8, dtype=np.float32)
+
+class CompanyFinancialsLookup(FeatureLookupBase):
+    def __init__(self, financials_csv_path):
+        pass
+        
+    def get_vector(self, ticker, timestamp):
+        # Placeholder: Market Cap, PE Ratio, etc.
+        return np.zeros(6, dtype=np.float32)
