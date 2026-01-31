@@ -34,7 +34,7 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
     df_raw = pd.read_csv(TX_PATH)
     
     # Map horizon string to index
-    horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
+    horizons = ['3M', '6M', '8M', '12M', '18M', '24M']
     if horizon not in horizons:
         raise ValueError(f"Invalid horizon: {horizon}. Must be one of {horizons}")
     h_idx = horizons.index(horizon)

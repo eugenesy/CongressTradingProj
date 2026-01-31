@@ -9,6 +9,7 @@ import sys
 # Ensure src is in path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+# Import Configs for Feature Flags
 from src.config import (
     INCLUDE_POLITICIAN_BIO, INCLUDE_IDEOLOGY, INCLUDE_DISTRICT_ECON, INCLUDE_COMMITTEES,
     INCLUDE_COMPANY_SIC, INCLUDE_COMPANY_FINANCIALS,
@@ -48,33 +49,20 @@ class TemporalGraphBuilder:
             
     def _init_feature_lookups(self):
         print("Initializing Feature Lookups...")
-        
-        # Base Term Lookup
         if INCLUDE_POLITICIAN_BIO or INCLUDE_IDEOLOGY or INCLUDE_DISTRICT_ECON or INCLUDE_COMMITTEES:
             self.term_lookup = TermLookup(CONGRESS_TERMS_PATH)
         
         if INCLUDE_POLITICIAN_BIO:
-            print("  - Loading Politician Bio Data...")
             self.lookups['bio'] = PoliticianBioLookup(CONGRESS_TERMS_PATH, self.term_lookup)
-
         if INCLUDE_IDEOLOGY:
-            print("  - Loading Ideology Data...")
             self.lookups['ideology'] = IdeologyLookup(IDEOLOGY_PATH, self.term_lookup)
-            
         if INCLUDE_DISTRICT_ECON:
-            print("  - Loading District Econ Data...")
             self.lookups['econ'] = DistrictEconLookup(DISTRICT_ECON_DIR, self.term_lookup)
-            
         if INCLUDE_COMMITTEES:
-            print("  - Loading Committee Data...")
             self.lookups['committee'] = CommitteeLookup(COMMITTEE_PATH, self.term_lookup)
-            
         if INCLUDE_COMPANY_SIC:
-            print("  - Loading Company SIC Data...")
             self.lookups['sic'] = CompanySICLookup(COMPANY_SIC_PATH)
-            
         if INCLUDE_COMPANY_FINANCIALS:
-            print("  - Loading Company Financials...")
             self.lookups['financials'] = CompanyFinancialsLookup(COMPANY_FIN_PATH)
 
     def _parse_amount(self, amt_str):
@@ -89,22 +77,10 @@ class TemporalGraphBuilder:
             return 0.0
 
     def process(self):
-        src = []
-        dst = []
-        t = []
+        src, dst, t, msg_list = [], [], [], []
+        x_pol_list, x_comp_list = [], []
+        y, resolution_t = [], []
         
-        # THREE separate feature lists
-        msg_list = []      # Edge Features (Trade)
-        x_pol_list = []    # Source Node Features (Politician)
-        x_comp_list = []   # Dest Node Features (Company)
-        
-        y = []   
-        resolution_t = []
-        
-        num_pols = len(self.pol_id_map)
-        num_comps = len(self.company_id_map)
-        total_nodes = num_pols + num_comps
-
         if len(self.transactions) > 0:
             base_time = pd.to_datetime(self.transactions['Filed'].min()).timestamp()
         else:
@@ -118,10 +94,6 @@ class TemporalGraphBuilder:
         if os.path.exists("data/price_sequences.pt"):
             print("Loading Price Sequences...")
             price_map = torch.load("data/price_sequences.pt")
-            if 'transaction_id' in self.transactions.columns:
-                self.transactions['transaction_id'] = self.transactions['transaction_id'].fillna(-1).astype(int)
-            else:
-                price_map = {}
         else:
             price_map = {}
             
@@ -147,47 +119,30 @@ class TemporalGraphBuilder:
             dst.append(c_idx)
             
             event_ts = row['Filed_DT'].timestamp()
-            ts_norm = event_ts - base_time
-            t.append(int(ts_norm))
+            ts_norm = int(event_ts - base_time)
+            t.append(ts_norm)
             
-            # --- 1. EDGE FEATURES (Trade Only) ---
+            # --- 1. EDGE FEATURES ---
             amt = self._parse_amount(row['Trade_Size_USD'])
             amt_log = np.log1p(amt)
-            
-            tx_type = str(row.get('Transaction', '')).lower()
-            is_buy = 0.0
-            if 'purchase' in tx_type: is_buy = 1.0
-            elif 'sale' in tx_type: is_buy = -1.0
-            
+            is_buy = 1.0 if 'purchase' in str(row.get('Transaction','')).lower() else -1.0
             gap_days = max(0, (row['Filed_DT'] - row['Traded_DT']).days) if pd.notnull(row['Traded_DT']) else 30
             gap_feat = np.log1p(gap_days)
-            
-            # [Amount, Type, Gap] (Dim=3)
             msg_list.append([amt_log, is_buy, gap_feat])
             
             # --- 2. DYNAMIC NODE FEATURES (Politician) ---
-            # Evaluated at event_ts (updates with Congress/Term changes)
             pol_vec = []
-            if INCLUDE_POLITICIAN_BIO:
-                pol_vec.extend(self.lookups['bio'].get_vector(pid, event_ts).tolist())
-            if INCLUDE_IDEOLOGY:
-                pol_vec.extend(self.lookups['ideology'].get_vector(pid, event_ts).tolist())
-            if INCLUDE_DISTRICT_ECON:
-                pol_vec.extend(self.lookups['econ'].get_vector(pid, event_ts).tolist())
-            if INCLUDE_COMMITTEES:
-                pol_vec.extend(self.lookups['committee'].get_vector(pid, event_ts).tolist())
-            
-            # If no features enabled, add dummy 1-dim
+            if INCLUDE_POLITICIAN_BIO: pol_vec.extend(self.lookups['bio'].get_vector(pid, event_ts).tolist())
+            if INCLUDE_IDEOLOGY: pol_vec.extend(self.lookups['ideology'].get_vector(pid, event_ts).tolist())
+            if INCLUDE_DISTRICT_ECON: pol_vec.extend(self.lookups['econ'].get_vector(pid, event_ts).tolist())
+            if INCLUDE_COMMITTEES: pol_vec.extend(self.lookups['committee'].get_vector(pid, event_ts).tolist())
             if not pol_vec: pol_vec = [0.0]
             x_pol_list.append(pol_vec)
 
             # --- 3. DYNAMIC NODE FEATURES (Company) ---
             comp_vec = []
-            if INCLUDE_COMPANY_SIC:
-                comp_vec.extend(self.lookups['sic'].get_vector(ticker, event_ts).tolist())
-            if INCLUDE_COMPANY_FINANCIALS:
-                comp_vec.extend(self.lookups['financials'].get_vector(ticker, event_ts).tolist())
-                
+            if INCLUDE_COMPANY_SIC: comp_vec.extend(self.lookups['sic'].get_vector(ticker, event_ts).tolist())
+            if INCLUDE_COMPANY_FINANCIALS: comp_vec.extend(self.lookups['financials'].get_vector(ticker, event_ts).tolist())
             if not comp_vec: comp_vec = [0.0]
             x_comp_list.append(comp_vec)
             
@@ -210,24 +165,16 @@ class TemporalGraphBuilder:
             
         print(f"Skipped {skipped} transactions.")
         
-        # Tensor Conversion
-        msg_tensor = torch.tensor(msg_list, dtype=torch.float)
-        x_pol_tensor = torch.tensor(x_pol_list, dtype=torch.float)
-        x_comp_tensor = torch.tensor(x_comp_list, dtype=torch.float)
-        
-        print(f"Dimensions -> Msg: {msg_tensor.shape[1]}, Pol: {x_pol_tensor.shape[1]}, Comp: {x_comp_tensor.shape[1]}")
-        
         data = TemporalData(
             src=torch.tensor(src, dtype=torch.long),
             dst=torch.tensor(dst, dtype=torch.long),
             t=torch.tensor(t, dtype=torch.long),
-            msg=msg_tensor,
+            msg=torch.tensor(msg_list, dtype=torch.float),
             y=torch.tensor(y, dtype=torch.float)
         )
         
-        # Attach the Dynamic Node Features
-        data.x_pol = x_pol_tensor
-        data.x_comp = x_comp_tensor
+        data.x_pol = torch.tensor(x_pol_list, dtype=torch.float)
+        data.x_comp = torch.tensor(x_comp_list, dtype=torch.float)
         
         if price_seqs:
             data.price_seq = torch.stack(price_seqs)
@@ -235,9 +182,7 @@ class TemporalGraphBuilder:
             data.price_seq = torch.zeros((len(src), 14))
         
         data.trade_t = torch.tensor(resolution_t, dtype=torch.long)
-        data.num_nodes = total_nodes
-        data.num_parties = 0 # No longer needed for static lookup
-        data.num_states = 0
+        data.num_nodes = len(self.pol_id_map) + len(self.company_id_map)
         
         return data
 
@@ -250,4 +195,4 @@ if __name__ == "__main__":
         os.makedirs("data", exist_ok=True)
         torch.save(data, "data/temporal_data.pt")
     else:
-        print(f"Transaction file not found at {TX_PATH}")
+        print(f"File not found: {TX_PATH}")
