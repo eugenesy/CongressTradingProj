@@ -1,96 +1,99 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch_geometric.nn import TGNMemory, TransformerConv
-from torch_geometric.nn.models.tgn import LastAggregator
+import pandas as pd
+import numpy as np
 
-class IdentityMessage(torch.nn.Module):
-    def __init__(self, raw_msg_dim, memory_dim, time_dim):
-        super(IdentityMessage, self).__init__()
-        self.out_channels = raw_msg_dim + 2 * memory_dim + time_dim
-
-    def forward(self, z_src, z_dst, raw_msg, t_enc):
-        return torch.cat([z_src, z_dst, raw_msg, t_enc], dim=-1)
+class TimeEncoder(nn.Module):
+    def __init__(self, dimension):
+        super(TimeEncoder, self).__init__()
+        self.dimension = dimension
+        self.w = nn.Linear(1, dimension)
+        self.p = nn.Linear(1, dimension)
+        
+    def forward(self, t):
+        t = t.unsqueeze(1).float()
+        return torch.cos(self.w(t)) + torch.sin(self.p(t))
 
 class GAPTGN(nn.Module):
-    def __init__(self, edge_feat_dim, pol_dim, comp_dim, price_seq_dim, hidden_dim, num_nodes):
-        """
-        GAP-TGN Model with Dynamic Node Features.
-        pol_dim: Dimension of dynamic politician features (Bio + Ideology etc.)
-        comp_dim: Dimension of dynamic company features (SIC + Financials)
-        """
+    def __init__(self, num_nodes, edge_feat_dim, pol_feat_dim, comp_feat_dim, 
+                 time_dim=100, memory_dim=100, embedding_dim=100, device='cpu'):
         super(GAPTGN, self).__init__()
+        self.num_nodes = num_nodes
+        self.device = device
+        self.memory_dim = memory_dim
+        self.embedding_dim = embedding_dim
         
-        self.hidden_dim = hidden_dim
+        # Time Encoder
+        self.time_encoder = TimeEncoder(time_dim)
         
-        # 1. TGN Memory
-        self.memory = TGNMemory(
-            num_nodes=num_nodes,
-            raw_msg_dim=edge_feat_dim,
-            memory_dim=hidden_dim,
-            time_dim=hidden_dim,
-            message_module=IdentityMessage(edge_feat_dim, hidden_dim, hidden_dim),
-            aggregator_module=LastAggregator()
-        )
+        # Memory
+        self.memory = None
+        self.last_update = None
         
-        # 2. Graph Embedding (GNN)
-        self.gnn = TransformerConv(
-            in_channels=hidden_dim,
-            out_channels=hidden_dim,
-            heads=2,
-            dropout=0.1,
-            edge_dim=edge_feat_dim
-        )
-        
-        # 3. Dynamic Node Feature Encoders (Replacing Static Embeddings)
-        # We project the raw feature vectors into the hidden space
-        self.pol_encoder = nn.Linear(pol_dim, hidden_dim)
-        self.comp_encoder = nn.Linear(comp_dim, hidden_dim)
-        
-        # 4. Price Sequence Encoder
-        self.price_lstm = nn.LSTM(input_size=1, hidden_size=32, batch_first=True)
-        self.price_proj = nn.Linear(32, hidden_dim)
-        
-        # 5. Prediction Head
-        self.predictor = nn.Sequential(
-            nn.Linear(hidden_dim * 3, 64),
+        # Message Function
+        self.msg_dim = memory_dim * 2 + time_dim + edge_feat_dim
+        self.msg_encoder = nn.Sequential(
+            nn.Linear(self.msg_dim, memory_dim),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Linear(memory_dim, memory_dim)
+        )
+        
+        # Memory Updater (GRU)
+        self.memory_updater = nn.GRUCell(memory_dim, memory_dim)
+        
+        # Embedding / Fusion
+        # Dynamic Projection Layers
+        self.pol_proj = nn.Linear(pol_feat_dim, embedding_dim)
+        self.comp_proj = nn.Linear(comp_feat_dim, embedding_dim)
+        
+        self.fusion = nn.Linear(memory_dim + embedding_dim, embedding_dim)
+        
+        # Decoder
+        self.decoder = nn.Sequential(
+            nn.Linear(embedding_dim * 2, 64),
+            nn.ReLU(),
             nn.Linear(64, 1)
         )
+        
+        self.reset_memory()
+        
+    def reset_memory(self):
+        self.memory = torch.zeros(self.num_nodes, self.memory_dim).to(self.device)
+        self.last_update = torch.zeros(self.num_nodes).to(self.device)
+        
+    def detach_memory(self):
+        self.memory = self.memory.detach()
+        
+    def forward(self, src, dst, t, msg, x_pol, x_comp):
+        # 1. Embeddings
+        mem_src = self.memory[src]
+        mem_dst = self.memory[dst]
+        
+        # Project Politician Features
+        # x_pol shape: [Num_Politicians, Pol_Feat_Dim]
+        feat_src = self.pol_proj(x_pol[src])
+            
+        # Project Company Features
+        # x_comp shape: [Num_Companies, Comp_Feat_Dim]
+        # dst indices are global (OFFSET by num_pols)
+        offset = x_pol.shape[0]
+        comp_idx = dst - offset
+        
+        # Safety clamp
+        comp_idx = torch.clamp(comp_idx, 0, x_comp.shape[0]-1)
+        feat_dst = self.comp_proj(x_comp[comp_idx])
+            
+        # Fusion: Combine Memory + Static Features
+        emb_src = self.fusion(torch.cat([mem_src, feat_src], dim=1))
+        emb_dst = self.fusion(torch.cat([mem_dst, feat_dst], dim=1))
+        
+        # 2. Decode
+        combined = torch.cat([emb_src, emb_dst], dim=1)
+        logits = self.decoder(combined)
+        
+        return torch.sigmoid(logits), None
 
-    def forward(self, src, dst, t, msg, price_seq, trade_t, x_pol, x_comp):
-        """
-        x_pol: Tensor [Batch_Size, Pol_Feature_Dim] - Dynamic features for source nodes
-        x_comp: Tensor [Batch_Size, Comp_Feature_Dim] - Dynamic features for dest nodes
-        """
-        
-        # A. Update Memory (using Edge Features only)
-        self.memory.update_state(src, dst, t, msg)
-        
-        # Retrieve updated memory
-        mem_src = self.memory.memory[src]
-        mem_dst = self.memory.memory[dst]
-        
-        # B. Encode Dynamic Node Features
-        # These features naturally update because the data loader passes the 
-        # specific x_pol/x_comp row corresponding to the event time.
-        pol_emb = self.pol_encoder(x_pol)
-        comp_emb = self.comp_encoder(x_comp)
-        
-        # C. Price Encoder
-        p_seq = price_seq.unsqueeze(-1)
-        _, (h_n, _) = self.price_lstm(p_seq)
-        price_emb = self.price_proj(h_n[-1])
-        
-        # D. Feature Fusion
-        # Context = Memory (History) + Dynamic Features (Current State)
-        pol_ctx = mem_src + pol_emb
-        comp_ctx = mem_dst + comp_emb + price_emb
-        
-        combined = torch.cat([pol_ctx, comp_ctx, price_emb], dim=1)
-        
-        # E. Predict
-        out = self.predictor(combined)
-        
-        return out.squeeze(-1)
+    def update_memory(self, src, dst, t, msg):
+        # Placeholder for proper TGN memory update
+        # In full implementation, this should update self.memory using msg_encoder + GRU
+        pass
