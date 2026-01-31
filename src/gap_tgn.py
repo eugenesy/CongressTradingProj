@@ -67,7 +67,7 @@ class Decoder(torch.nn.Module):
         
         return self.net(torch.cat([h_graph_w, h_mkt_w], dim=-1))
 
-class ResearchTGN(torch.nn.Module):
+class GAPTGN(torch.nn.Module):
     def __init__(self, num_nodes, raw_msg_dim, memory_dim, time_dim, embedding_dim, num_parties, num_states):
         super().__init__()
         self.price_emb_dim = 32
