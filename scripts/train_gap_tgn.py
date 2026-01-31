@@ -125,8 +125,12 @@ def run_tgn_study(horizon='6M', epochs=50, hidden_dim=128, lr=0.001, seed=42):
         loss = criterion(out[train_idx], labels_binary[train_idx])
         loss.backward()
         optimizer.step()
+
+        # 4. Update Memory for next step
+        with torch.no_grad():
+            model.update_memory(data.src, data.dst, data.t, data.msg)
         
-        # 4. Detach memory
+        # 5. Detach memory
         model.memory.detach()
         
         # Evaluate
