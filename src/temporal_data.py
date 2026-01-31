@@ -90,34 +90,11 @@ class TemporalGraphBuilder:
         self.transactions['Traded_DT'] = pd.to_datetime(self.transactions['Traded'])
         self.transactions['Filed_DT'] = pd.to_datetime(self.transactions['Filed'])
         
+        # Load Price Sequences
         if os.path.exists("data/price_sequences.pt"):
             print("Loading Price Sequences...")
             price_map = torch.load("data/price_sequences.pt")
-            
-            # 1. Filter Transactions
-            # We only keep transactions that have a corresponding price sequence
-            print(f"Filtering transactions... Original: {len(self.transactions)}")
-            
-            valid_ids = set(price_map.keys())
-            
-            # Ensure transaction_id is int and handle NaNs
-            self.transactions['transaction_id'] = self.transactions['transaction_id'].fillna(-1).astype(int)
-            
-            # Apply Filter
-            mask = self.transactions['transaction_id'].isin(valid_ids)
-            self.transactions = self.transactions[mask].reset_index(drop=True)
-            
-            print(f"Filtered: {len(self.transactions)} (Removed {len(mask)-mask.sum()} missing price seqs)")
-            
-            # 2. Save Artifact
-            # Save CLEAN CSV for other scripts (e.g. ablation studies) to use
-            os.makedirs("data/processed", exist_ok=True)
-            clean_path = "data/processed/ml_dataset_clean.csv"
-            print(f"Saving filtered dataset to {clean_path}...")
-            self.transactions.to_csv(clean_path, index=False)
-            
         else:
-            print("Warning: data/price_sequences.pt not found. Using zero sequences.")
             price_map = {}
             
         price_seqs = [] 
