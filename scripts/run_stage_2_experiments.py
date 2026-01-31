@@ -68,20 +68,10 @@ def run_single_experiment(horizon, data, df, args):
 
     def slice_data(indices):
         idx = torch.as_tensor(indices, dtype=torch.long, device=device)
-        
-        # Create TemporalData slice
-        sliced = TemporalData(
+        return TemporalData(
             src=data.src[idx], dst=data.dst[idx], t=data.t[idx], msg=data.msg[idx],
             y=data.y[idx], trade_t=data.trade_t[idx], price_seq=data.price_seq[idx]
         )
-        
-        # Manually attach the sliced dynamic features so the Loader batches them
-        if hasattr(data, 'x_pol'):
-            sliced.x_pol = data.x_pol[idx]
-        if hasattr(data, 'x_comp'):
-            sliced.x_comp = data.x_comp[idx]
-            
-        return sliced
 
     for year in range(args.start_year, args.end_year + 1):
         for month in range(1, 13):
@@ -144,7 +134,7 @@ def run_single_experiment(horizon, data, df, args):
             # --- TRAIN ---
             model.train()
             for epoch in range(1, args.epochs + 1):
-                model.reset_memory()
+                model.memory.reset_state()
                 neighbor_loader.reset_state()
                 
                 for batch in train_loader:
@@ -156,17 +146,17 @@ def run_single_experiment(horizon, data, df, args):
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
                     
                     hist_msg = data.msg[e_id]
-                    rel_t = model.last_update[n_id[edge_index[1]]] - data.t[e_id]
-                    rel_t_enc = model.time_encoder(rel_t.float())
+                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]
+                    rel_t_enc = model.memory.time_enc(rel_t.float())
                     hist_price = model.get_price_embedding(data.price_seq[e_id])
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price], dim=-1)
                     
-                    z = model.gnn(n_id, edge_index, edge_attr)
+                    z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in batch.src]]
                     z_dst = z[[assoc[i.item()] for i in batch.dst]]
                     
                     d_src, d_dst = model.encode_dynamic(data.x_pol, data.x_comp, batch.src, batch.dst, num_pols)
-                    p_context = model.price_encoder(batch.price_seq)
+                    p_context = model.get_price_embedding(batch.price_seq)
                     preds = model.predictor(z_src, z_dst, d_src, d_dst, p_context)
                     
                     raw_y = batch.y[:, h_idx]
@@ -179,9 +169,10 @@ def run_single_experiment(horizon, data, df, args):
                         loss.backward()
                         optimizer.step()
                         
-                    model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
+                    aug_msg = torch.cat([batch.msg, p_context], dim=1)
+                    model.memory.update_state(batch.src, batch.dst, batch.t, aug_msg)
                     neighbor_loader.insert(batch.src, batch.dst)
-                    model.detach_memory()
+                    model.memory.detach()
                     
             # --- GAP ---
             model.eval()
@@ -189,8 +180,9 @@ def run_single_experiment(horizon, data, df, args):
                 with torch.no_grad():
                     for batch in gap_loader:
                         batch = batch.to(device)
-                        p_context = model.price_encoder(batch.price_seq)
-                        model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
+                        p_context = model.get_price_embedding(batch.price_seq)
+                        aug_msg = torch.cat([batch.msg, p_context], dim=1)
+                        model.memory.update_state(batch.src, batch.dst, batch.t, aug_msg)
                         neighbor_loader.insert(batch.src, batch.dst)
 
             # --- TEST ---
@@ -216,17 +208,17 @@ def run_single_experiment(horizon, data, df, args):
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
                     
                     hist_msg = data.msg[e_id]
-                    rel_t = model.last_update[n_id[edge_index[1]]] - data.t[e_id]
-                    rel_t_enc = model.time_encoder(rel_t.float())
+                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]
+                    rel_t_enc = model.memory.time_enc(rel_t.float())
                     hist_price = model.get_price_embedding(data.price_seq[e_id])
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price], dim=-1)
                     
-                    z = model.gnn(n_id, edge_index, edge_attr)
+                    z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in batch.src]]
                     z_dst = z[[assoc[i.item()] for i in batch.dst]]
                     
                     d_src, d_dst = model.encode_dynamic(data.x_pol, data.x_comp, batch.src, batch.dst, num_pols)
-                    p_context = model.price_encoder(batch.price_seq)
+                    p_context = model.get_price_embedding(batch.price_seq)
                     
                     # Probabilities
                     probs = model.predictor(z_src, z_dst, d_src, d_dst, p_context).sigmoid().cpu().squeeze(-1).numpy()
@@ -257,7 +249,8 @@ def run_single_experiment(horizon, data, df, args):
                         targets_true.extend(batch_targs[batch_mask])
                     
                     # Update State
-                    model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
+                    aug_msg = torch.cat([batch.msg, p_context], dim=1)
+                    model.memory.update_state(batch.src, batch.dst, batch.t, aug_msg)
                     neighbor_loader.insert(batch.src, batch.dst)
 
             # --- CALCULATE MONTHLY STATISTICS ---

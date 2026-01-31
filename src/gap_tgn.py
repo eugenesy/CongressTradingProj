@@ -107,7 +107,6 @@ class LinkPredictor(torch.nn.Module):
         
         # 1. Apply Graph Attention on the current Memory
         # We pass the whole memory table to the GNN to update embeddings based on graph structure
-        
         z = self.gnn(self.memory, edge_index, edge_attr)
         
         # 2. Extract specific node embeddings for the target batch
@@ -231,11 +230,3 @@ class GAPTGN(nn.Module):
         self.memory[dst] = updated_mem_dst.detach()
         self.last_update[src] = t.detach()
         self.last_update[dst] = t.detach()
-    
-    def encode_dynamic(self, x_pol_batch, x_comp_batch, src, dst, num_pols):
-        """
-        Since x_pol and x_comp are now correctly batched by the TemporalDataLoader,
-        we simply return them. The src/dst args are kept for compatibility with 
-        the script call signature but are not needed for lookup anymore.
-        """
-        return x_pol_batch, x_comp_batch
