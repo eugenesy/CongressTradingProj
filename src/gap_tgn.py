@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch_geometric.nn import TGNMemory, TransformerConv
+from torch_geometric.nn import TGNMemory,TransformerConv
 
 class PriceEncoder(nn.Module):
     def __init__(self, input_dim=14, hidden_dim=32):
@@ -103,22 +103,22 @@ class LinkPredictor(torch.nn.Module):
             nn.Linear(64, 1)
         )
 
-    def forward(self, z_src, z_dst, x_pol, x_comp, price_context=None):
-        """
-        z_src, z_dst: Embeddings from the GNN (Batch, memory_dim)
-        x_pol, x_comp: Dynamic features (Batch, pol_dim/comp_dim)
-        price_context: Optional context vector (not currently used in main decoder)
-        """
-        # 1. Project inputs to common embedding space
-        pol_emb = self.pol_proj(x_pol)
-        comp_emb = self.comp_proj(x_comp)
+    def forward(self, src, dst, t, msg, x_pol, x_comp, edge_index, edge_attr, price_seq=None):
         
-        # 2. Concatenate inputs for the decoder
-        # Structure: (Mem_Src + Pol_Static) + (Mem_Dst + Comp_Static)
-        h = torch.cat([z_src, pol_emb, z_dst, comp_emb], dim=-1)
+        # 1. Apply Graph Attention on the current Memory
+        # We pass the whole memory table to the GNN to update embeddings based on graph structure
         
-        # 3. Pass through the main decoder network
-        return self.net(h)
+        z = self.gnn(self.memory, edge_index, edge_attr)
+        
+        # 2. Extract specific node embeddings for the target batch
+        z_src = z[src]
+        z_dst = z[dst]
+        
+        # 3. Pass GNN-refined embeddings + Dynamic Features to Predictor
+        # Note: Price usage here is optional if you want it in the decoder, 
+        # but the critical part is putting it in the memory update (step 4 below).
+        logits = self.predictor(z_src, z_dst, x_pol, x_comp)
+        return torch.sigmoid(logits), None
     
 class GAPTGN(nn.Module):
     def __init__(self, num_nodes, edge_feat_dim, pol_feat_dim, comp_feat_dim, 
@@ -168,16 +168,10 @@ class GAPTGN(nn.Module):
     def detach_memory(self):
         self.memory = self.memory.detach()
         
-    def get_price_embedding(self, price_seq):
-        """Helper to get price embeddings (used by experiment scripts)."""
-        return self.price_encoder(price_seq)
-
     def forward(self, src, dst, t, msg, x_pol, x_comp):
         """
         Returns probabilities using current memory and batch features.
         Does NOT update memory (call update_memory for that).
-        Note: This method assumes 'src' and 'dst' are indices to look up in self.memory.
-        If using GNN, use self.gnn() externally first as done in experiment scripts.
         """
         mem_src = self.memory[src]
         mem_dst = self.memory[dst]
@@ -188,13 +182,6 @@ class GAPTGN(nn.Module):
         return torch.sigmoid(logits), None
 
     def update_memory(self, src, dst, t, msg, price_seq):
-        """
-        Updates the memory state using the provided batch of interactions.
-        Should be called AFTER forward/loss computation for the batch.
-        """
-        # 0. Ensure t is float for encoding and storage
-        t_float = t.float()
-
         # 1. Embed Price
         # price_seq: (Batch, 14) -> (Batch, 32)
         price_emb = self.price_encoder(price_seq)
@@ -207,7 +194,7 @@ class GAPTGN(nn.Module):
         # 3. Standard TGN Update
         mem_src = self.memory[src]
         mem_dst = self.memory[dst]
-        t_enc = self.time_encoder(t_float)
+        t_enc = self.time_encoder(t)
         
         # Use the augmented message
         encoded_msg = self.msg_module(mem_src, mem_dst, augmented_msg, t_enc)
@@ -217,12 +204,38 @@ class GAPTGN(nn.Module):
         
         self.memory[src] = updated_mem_src.detach()
         self.memory[dst] = updated_mem_dst.detach()
-        self.last_update[src] = t_float.detach()
-        self.last_update[dst] = t_float.detach()
-
+        self.last_update[src] = t.detach()
+        self.last_update[dst] = t.detach()
+        """
+        Updates the memory state using the provided batch of interactions.
+        Should be called AFTER forward/loss computation for the batch.
+        """
+        # 1. Get Memory (Detached for truncated BPTT)
+        mem_src = self.memory[src]
+        mem_dst = self.memory[dst]
+        
+        # 2. Time Encoding
+        t_enc = self.time_encoder(t)
+        
+        # 3. Compute Complex Messages
+        # Note: We use the same message logic for both Src and Dst 
+        # (assuming undirected information flow or shared context)
+        encoded_msg = self.msg_module(mem_src, mem_dst, msg, t_enc)
+        
+        # 4. Update Memory with GRU
+        updated_mem_src = self.memory_updater(encoded_msg, mem_src)
+        updated_mem_dst = self.memory_updater(encoded_msg, mem_dst)
+        
+        # 5. Commit updates
+        self.memory[src] = updated_mem_src.detach()
+        self.memory[dst] = updated_mem_dst.detach()
+        self.last_update[src] = t.detach()
+        self.last_update[dst] = t.detach()
+    
     def encode_dynamic(self, x_pol_batch, x_comp_batch, src, dst, num_pols):
         """
         Since x_pol and x_comp are now correctly batched by the TemporalDataLoader,
-        we simply return them.
+        we simply return them. The src/dst args are kept for compatibility with 
+        the script call signature but are not needed for lookup anymore.
         """
         return x_pol_batch, x_comp_batch

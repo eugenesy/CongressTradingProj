@@ -158,14 +158,14 @@ def run_single_experiment(horizon, data, df, args):
                     hist_msg = data.msg[e_id]
                     rel_t = model.last_update[n_id[edge_index[1]]] - data.t[e_id]
                     rel_t_enc = model.time_encoder(rel_t.float())
-                    hist_price = model.price_encoder(data.price_seq[e_id])
+                    hist_price = model.get_price_embedding(data.price_seq[e_id])
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price], dim=-1)
                     
-                    z = model.gnn(model.memory[n_id], edge_index, edge_attr)
+                    z = model.gnn(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in batch.src]]
                     z_dst = z[[assoc[i.item()] for i in batch.dst]]
                     
-                    d_src, d_dst = model.encode_dynamic(batch.x_pol, batch.x_comp, batch.src, batch.dst, num_pols)                    
+                    d_src, d_dst = model.encode_dynamic(data.x_pol, data.x_comp, batch.src, batch.dst, num_pols)
                     p_context = model.price_encoder(batch.price_seq)
                     preds = model.predictor(z_src, z_dst, d_src, d_dst, p_context)
                     
@@ -179,7 +179,7 @@ def run_single_experiment(horizon, data, df, args):
                         loss.backward()
                         optimizer.step()
                         
-                    model.update_memory(batch.src, batch.dst, batch.t.float(), batch.msg, batch.price_seq)
+                    model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
                     neighbor_loader.insert(batch.src, batch.dst)
                     model.detach_memory()
                     
@@ -190,7 +190,7 @@ def run_single_experiment(horizon, data, df, args):
                     for batch in gap_loader:
                         batch = batch.to(device)
                         p_context = model.price_encoder(batch.price_seq)
-                        model.update_memory(batch.src, batch.dst, batch.t.float(), batch.msg, batch.price_seq)
+                        model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
                         neighbor_loader.insert(batch.src, batch.dst)
 
             # --- TEST ---
@@ -221,11 +221,11 @@ def run_single_experiment(horizon, data, df, args):
                     hist_price = model.get_price_embedding(data.price_seq[e_id])
                     edge_attr = torch.cat([rel_t_enc, hist_msg, hist_price], dim=-1)
                     
-                    z = model.gnn(model.memory[n_id], edge_index, edge_attr)
+                    z = model.gnn(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in batch.src]]
                     z_dst = z[[assoc[i.item()] for i in batch.dst]]
                     
-                    d_src, d_dst = model.encode_dynamic(batch.x_pol, batch.x_comp, batch.src, batch.dst, num_pols)
+                    d_src, d_dst = model.encode_dynamic(data.x_pol, data.x_comp, batch.src, batch.dst, num_pols)
                     p_context = model.price_encoder(batch.price_seq)
                     
                     # Probabilities
@@ -257,7 +257,7 @@ def run_single_experiment(horizon, data, df, args):
                         targets_true.extend(batch_targs[batch_mask])
                     
                     # Update State
-                    model.update_memory(batch.src, batch.dst, batch.t.float(), batch.msg, batch.price_seq)
+                    model.update_memory(batch.src, batch.dst, batch.t, batch.msg, batch.price_seq)
                     neighbor_loader.insert(batch.src, batch.dst)
 
             # --- CALCULATE MONTHLY STATISTICS ---
