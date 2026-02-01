@@ -122,10 +122,18 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
             test_start = pd.Timestamp(year, month, 1)
             next_month = test_start + pd.DateOffset(months=1)
-            gap_start = test_start - pd.DateOffset(months=1)
-
-            train_mask_df = df['Filed'] < gap_start
-            gap_mask_df = (df['Filed'] >= gap_start) & (df['Filed'] < test_start)
+            
+            # Resolution-Based Splitting (Fair Baseline Comparison)
+            # Resolution = Traded + Horizon (in days)
+            df['Resolution'] = df['Traded'] + pd.to_timedelta(h_days, unit='D')
+            
+            # 1. Training Set: Filed before test_start AND Resolved before test_start
+            train_mask_df = (df['Filed'] < test_start) & (df['Resolution'] < test_start)
+            
+            # 2. Gap Set: Filed before test_start AND NOT yet Resolved
+            gap_mask_df = (df['Filed'] < test_start) & (df['Resolution'] >= test_start)
+            
+            # 3. Test Set: Filed within the test month
             test_mask_df = (df['Filed'] >= test_start) & (df['Filed'] < next_month)
 
             train_data = slice_data(df[train_mask_df].index)
