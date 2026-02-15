@@ -7,7 +7,9 @@ import torch
 import xgboost as xgb
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.dummy import DummyClassifier
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("baselines")
@@ -108,6 +110,7 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, 
     results_xgb = []
     results_lr = []
     results_mlp = []
+    results_random = []
     
     # Store Row-Level Predictions
     # Schema: [TransactionID, Date, Model, Prob_Up, Pred_Up, True_Up]
@@ -176,9 +179,11 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, 
             model_xgb = xgb.XGBClassifier(n_estimators=100, max_depth=5, learning_rate=0.05, random_state=42)
             model_xgb.fit(X_train, y_train)
             preds_xgb = np.asarray(model_xgb.predict_proba(X_test))[:, 1]
+            pred_cls_xgb = model_xgb.predict(X_test)
 
             auc_xgb = roc_auc_score(y_test, preds_xgb) if len(set(y_test)) > 1 else 0.5
-            results_xgb.append({'Year': year, 'Month': month, 'AUC': auc_xgb})
+            f1_xgb = f1_score(y_test, pred_cls_xgb)
+            results_xgb.append({'Year': year, 'Month': month, 'AUC': auc_xgb, 'F1': f1_xgb})
 
             # 2. LogReg
             scaler = StandardScaler()
@@ -188,9 +193,11 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, 
             model_lr = LogisticRegression(max_iter=1000)
             model_lr.fit(X_train_scaled, y_train)
             preds_lr = np.asarray(model_lr.predict_proba(X_test_scaled))[:, 1]
+            pred_cls_lr = model_lr.predict(X_test_scaled)
 
             auc_lr = roc_auc_score(y_test, preds_lr) if len(set(y_test)) > 1 else 0.5
-            results_lr.append({'Year': year, 'Month': month, 'AUC': auc_lr})
+            f1_lr = f1_score(y_test, pred_cls_lr)
+            results_lr.append({'Year': year, 'Month': month, 'AUC': auc_lr, 'F1': f1_lr})
 
             # 3. MLP (Torch)
             model_mlp = TorchMLPClassifier(
@@ -201,13 +208,26 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, 
             )
             model_mlp.fit(X_train_scaled, y_train)
             preds_mlp = np.asarray(model_mlp.predict_proba(X_test_scaled))[:, 1]
+            # MLP manual predict
+            pred_cls_mlp = (preds_mlp > 0.5).astype(float)
 
             auc_mlp = roc_auc_score(y_test, preds_mlp) if len(set(y_test)) > 1 else 0.5
-            results_mlp.append({'Year': year, 'Month': month, 'AUC': auc_mlp})
+            f1_mlp = f1_score(y_test, pred_cls_mlp)
+            results_mlp.append({'Year': year, 'Month': month, 'AUC': auc_mlp, 'F1': f1_mlp})
+
+            # 4. Random Baseline
+            model_random = DummyClassifier(strategy='uniform', random_state=42)
+            model_random.fit(X_train, y_train)
+            preds_random = model_random.predict_proba(X_test)[:, 1]
+            pred_cls_random = model_random.predict(X_test)
+            
+            auc_random = roc_auc_score(y_test, preds_random) if len(set(y_test)) > 1 else 0.5
+            f1_random = f1_score(y_test, pred_cls_random)
+            results_random.append({'Year': year, 'Month': month, 'AUC': auc_random, 'F1': f1_random})
 
             logger.info(
                 f"  [RESULT {year}-{month:02}]: XGB_AUC={auc_xgb:.4f} | "
-                f"LR_AUC={auc_lr:.4f} | MLP_AUC={auc_mlp:.4f}"
+                f"LR_AUC={auc_lr:.4f} | MLP_AUC={auc_mlp:.4f} | RND_AUC={auc_random:.4f}"
             )
             
             # --- DETAILED LOGGING ---
@@ -243,23 +263,35 @@ def run_fair_baselines(horizon='6M', alpha=0.0, start_year=2023, end_year=2023, 
                 rec_mlp['Pred_Up'] = 1.0 if preds_mlp[i] > 0.5 else 0.0
                 predictions_log.append(rec_mlp)
 
+                # Random
+                rec_rnd = base_record.copy()
+                rec_rnd['Model'] = 'Random'
+                rec_rnd['Prob_Up'] = preds_random[i]
+                rec_rnd['Pred_Up'] = pred_cls_random[i]
+                predictions_log.append(rec_rnd)
+
     # Summary
     res_xgb = pd.DataFrame(results_xgb)
     res_lr = pd.DataFrame(results_lr)
+
     res_mlp = pd.DataFrame(results_mlp)
+    res_random = pd.DataFrame(results_random)
     
     print("\n" + "="*40)
     print(f"FAIR BASELINES SUMMARY: Horizon={horizon}")
     print("="*40)
-    print(f"XGB MEAN AUC: {res_xgb.AUC.mean():.4f}")
-    print(f"LR  MEAN AUC: {res_lr.AUC.mean():.4f}")
-    print(f"MLP MEAN AUC: {res_mlp.AUC.mean():.4f}")
+    print(f"XGB MEAN AUC: {res_xgb.AUC.mean():.4f} | F1: {res_xgb.F1.mean():.4f}")
+    print(f"LR  MEAN AUC: {res_lr.AUC.mean():.4f} | F1: {res_lr.F1.mean():.4f}")
+    print(f"MLP MEAN AUC: {res_mlp.AUC.mean():.4f} | F1: {res_mlp.F1.mean():.4f}")
+    print(f"RND MEAN AUC: {res_random.AUC.mean():.4f} | F1: {res_random.F1.mean():.4f}")
     
     out_path = Path(out_dir)
     out_path.mkdir(exist_ok=True, parents=True)
     res_xgb.to_csv(out_path / f"baseline_xgb_{horizon}.csv", index=False)
     res_lr.to_csv(out_path / f"baseline_lr_{horizon}.csv", index=False)
+
     res_mlp.to_csv(out_path / f"baseline_mlp_{horizon}.csv", index=False)
+    res_random.to_csv(out_path / f"baseline_random_{horizon}.csv", index=False)
     
     # Save Detailed Logs
     pd.DataFrame(predictions_log).to_csv(out_path / f"predictions_baseline_{horizon}.csv", index=False)
