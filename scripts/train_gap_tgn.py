@@ -21,6 +21,7 @@ except ImportError:
 
 from torch_geometric.loader import TemporalDataLoader
 from torch_geometric.nn.models.tgn import LastNeighborLoader
+from torch_geometric.data import TemporalData
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("research")
@@ -67,12 +68,20 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
     num_nodes = getattr(data, 'num_nodes', int(torch.cat([data.src, data.dst]).max().item()) + 1)
     raw_msg_dim = int(data.msg.size(-1))
+    
+    # Check for Static Features
     if hasattr(data, 'x_static'):
         num_parties = getattr(data, 'num_parties', int(data.x_static[:, 0].max().item()) + 1)
         num_states = getattr(data, 'num_states', int(data.x_static[:, 1].max().item()) + 1)
     else:
         num_parties = getattr(data, 'num_parties', 1)
         num_states = getattr(data, 'num_states', 1)
+
+    # Check for Dynamic Features (Enhanced Mode)
+    pol_dim = data.x_pol.size(1) if hasattr(data, 'x_pol') else 0
+    comp_dim = data.x_comp.size(1) if hasattr(data, 'x_comp') else 0
+    if pol_dim > 0:
+        logger.info(f"Detected Dynamic Features: Pol_Dim={pol_dim}, Comp_Dim={comp_dim}")
 
     horizon_map = {'1M': 0, '2M': 1, '3M': 2, '6M': 3, '8M': 4, '12M': 5, '18M': 6, '24M': 7}
     if horizon not in horizon_map:
@@ -82,14 +91,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
     h_seconds = h_days * 86400
 
     results = []
-    # Store Row-Level Predictions
-    # Schema: [TransactionID, Date, Model, Prob_Up, Pred_Up, True_Up]
     predictions_log = []
     
     out_path = Path(out_dir)
     out_path.mkdir(exist_ok=True, parents=True)
-
-    from torch_geometric.data import TemporalData
 
     def slice_data(indices):
         idx = torch.as_tensor(indices, dtype=torch.long, device=device)
@@ -103,7 +108,9 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 price_seq=torch.empty((0, data.price_seq.size(-1)), dtype=torch.float, device=device),
                 trade_t=torch.empty((0,), dtype=torch.long, device=device),
             )
-        return TemporalData(
+        
+        # Standard slice
+        sliced = TemporalData(
             src=data.src[idx],
             dst=data.dst[idx],
             t=data.t[idx],
@@ -112,6 +119,14 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             price_seq=data.price_seq[idx],
             trade_t=data.trade_t[idx],
         )
+        
+        # Slice Dynamic Features if present
+        if hasattr(data, 'x_pol'):
+            sliced.x_pol = data.x_pol[idx]
+        if hasattr(data, 'x_comp'):
+            sliced.x_comp = data.x_comp[idx]
+            
+        return sliced
 
     for year in range(start_year, end_year + 1):
         yearly_preds = []
@@ -122,18 +137,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
             test_start = pd.Timestamp(year, month, 1)
             next_month = test_start + pd.DateOffset(months=1)
-            
-            # Resolution-Based Splitting (Fair Baseline Comparison)
-            # Resolution = Traded + Horizon (in days)
             df['Resolution'] = df['Traded'] + pd.to_timedelta(h_days, unit='D')
             
-            # 1. Training Set: Filed before test_start AND Resolved before test_start
             train_mask_df = (df['Filed'] < test_start) & (df['Resolution'] < test_start)
-            
-            # 2. Gap Set: Filed before test_start AND NOT yet Resolved
             gap_mask_df = (df['Filed'] < test_start) & (df['Resolution'] >= test_start)
-            
-            # 3. Test Set: Filed within the test month
             test_mask_df = (df['Filed'] >= test_start) & (df['Filed'] < next_month)
 
             train_data = slice_data(df[train_mask_df].index)
@@ -156,13 +163,6 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             pos = train_targets[train_mask].sum().item()
             neg = train_mask.sum().item() - pos
             pos_weight = neg / max(1, pos)
-            logger.info(
-                "  Train=%s | Gap=%s | Test=%s | pos_weight=%.2f",
-                len(train_data.src),
-                len(gap_data.src),
-                len(test_data.src),
-                pos_weight,
-            )
 
             model = ResearchTGN(
                 num_nodes=num_nodes,
@@ -172,6 +172,8 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 embedding_dim=100,
                 num_parties=num_parties,
                 num_states=num_states,
+                pol_dim=pol_dim,  # Pass dynamic dims
+                comp_dim=comp_dim
             ).to(device)
 
             optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
@@ -206,6 +208,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
 
+                    # Historical Edge Features
                     hist_y = data.y[e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
                     hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
@@ -222,11 +225,19 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                         dim=-1,
                     )
 
+                    # Forward Pass
                     z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in src]]
                     z_dst = z[[assoc[i.item()] for i in dst]]
-                    s_src = model.encode_static(data.x_static[src])
-                    s_dst = model.encode_static(data.x_static[dst])
+                    
+                    # --- FIXED: Use updated encode_node_features with dynamic features ---
+                    x_pol_batch = getattr(batch, 'x_pol', None)
+                    x_comp_batch = getattr(batch, 'x_comp', None)
+                    
+                    s_src = model.encode_node_features(data.x_static[src], x_dynamic=x_pol_batch, mode='pol')
+                    s_dst = model.encode_node_features(data.x_static[dst], x_dynamic=x_comp_batch, mode='comp')
+                    # -------------------------------------------------------------
+
                     preds = model.predictor(z_src, z_dst, s_src, s_dst, p_context)
 
                     if train_batch_mask.sum() > 0:
@@ -250,22 +261,11 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                             model.memory.update_state(src, dst, t, aug_msg)
                             neighbor_loader.insert(src, dst)
 
-                logger.info(
-                    "    Epoch %s/%s | Loss: %.4f",
-                    epoch,
-                    epochs,
-                    float(np.mean(epoch_loss)) if epoch_loss else 0.0,
-                )
+                logger.info("    Epoch %s/%s | Loss: %.4f", epoch, epochs, float(np.mean(epoch_loss)) if epoch_loss else 0.0)
 
             model.eval()
             test_loader = TemporalDataLoader(test_data, batch_size=200)
-            all_preds = []
-            all_targets = []
-            
-            # For Logging: We need to map back to Transaction IDs
-            # The test_loader yields batches. We need to track which *indices* of test_data these correspond to.
-            # TemporalDataLoader yields samples sequentially from the TemporalData object.
-            # So we can just iterate through our original dataframe slice in chunks of 200.
+            all_preds, all_targets = [], []
             test_df_slice = df[test_mask_df]
             current_log_idx = 0
 
@@ -284,6 +284,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
 
+                    # Historical features for neighbors
                     hist_y = data.y[e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
                     hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
@@ -303,8 +304,14 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in src]]
                     z_dst = z[[assoc[i.item()] for i in dst]]
-                    s_src = model.encode_static(data.x_static[src])
-                    s_dst = model.encode_static(data.x_static[dst])
+                    
+                    # --- FIXED: Use updated encode_node_features with dynamic features ---
+                    x_pol_batch = getattr(batch, 'x_pol', None)
+                    x_comp_batch = getattr(batch, 'x_comp', None)
+                    s_src = model.encode_node_features(data.x_static[src], x_dynamic=x_pol_batch, mode='pol')
+                    s_dst = model.encode_node_features(data.x_static[dst], x_dynamic=x_comp_batch, mode='comp')
+                    # -------------------------------------------------------------
+                    
                     preds = model.predictor(z_src, z_dst, s_src, s_dst, p_context).sigmoid()
 
                     if label_mask.sum() > 0:
@@ -313,15 +320,8 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                         all_preds.extend(batch_preds)
                         all_targets.extend(batch_targets)
                         
-                        # --- DETAILED LOGGING ---
-                        # Get the corresponding rows from the dataframe
-                        # label_mask is a boolean mask for the current batch
-                        # We need to find which rows in test_df_slice correspond to this batch
                         batch_size_actual = len(src)
                         batch_df_rows = test_df_slice.iloc[current_log_idx : current_log_idx + batch_size_actual]
-                        
-                        # Now apply the label_mask to these rows to get only the valid targets
-                        # Note: label_mask is a tensor, we need to convert to numpy/bool
                         mask_np = label_mask.cpu().numpy().astype(bool)
                         valid_rows = batch_df_rows.iloc[mask_np]
                         
@@ -353,21 +353,12 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             res_f1 = f1_score(all_targets, np.array(all_preds) > 0.5)
             count = len(all_targets)
 
-            logger.info(
-                "  [RESULT %d-%02d]: AUC=%.4f | Acc=%.4f | F1=%.4f | Count=%s",
-                year,
-                month,
-                res_auc,
-                res_acc,
-                res_f1,
-                count,
-            )
+            logger.info("  [RESULT %d-%02d]: AUC=%.4f | Acc=%.4f | F1=%.4f | Count=%s", 
+                        year, month, res_auc, res_acc, res_f1, count)
             results.append({'Year': year, 'Month': month, 'AUC': res_auc, 'Acc': res_acc, 'F1': res_f1, 'Count': count})
-            
             yearly_preds.extend(all_preds)
             yearly_targets.extend(all_targets)
 
-        # End of Year Report
         if yearly_targets:
             report = classification_report(yearly_targets, np.array(yearly_preds) > 0.5, target_names=['Down', 'Up'])
             logger.info(f"\n--- Classification Report {year} ---\n{report}")
@@ -385,7 +376,6 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
         print("No results generated.")
 
     res_df.to_csv(out_path / f"study_{horizon}.csv", index=False)
-    # Save Detailed Logs
     pd.DataFrame(predictions_log).to_csv(out_path / f"predictions_tgn_{horizon}.csv", index=False)
 
 def main():

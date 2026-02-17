@@ -39,14 +39,14 @@ class Decoder(torch.nn.Module):
     def __init__(self, in_channels, price_dim):
         super().__init__()
         self.gate = nn.Sequential(
-            nn.Linear(in_channels * 2 + price_dim, 32),
+            nn.Linear(in_channels, 32),
             nn.ReLU(),
             nn.Linear(32, 1),
             nn.Sigmoid()
         )
         self.net = nn.Sequential(
-            nn.BatchNorm1d(in_channels * 2 + price_dim),
-            nn.Linear(in_channels * 2 + price_dim, 128),
+            nn.BatchNorm1d(in_channels),
+            nn.Linear(in_channels, 128),
             nn.ReLU(),
             nn.Dropout(0.3),                 
             nn.Linear(128, 64),
@@ -56,11 +56,15 @@ class Decoder(torch.nn.Module):
         )
 
     def forward(self, z_src, z_dst, s_src, s_dst, p_context):
+        # s_src/s_dst now contain the FUSED node features (Static + Dynamic)
         h_src = torch.cat([z_src, s_src], dim=-1)
         h_dst = torch.cat([z_dst, s_dst], dim=-1)
         h_graph = torch.cat([h_src, h_dst], dim=-1)
         
-        s_gate = self.gate(torch.cat([h_graph, p_context], dim=-1))
+        # Concat graph representation with price context
+        full_input = torch.cat([h_graph, p_context], dim=-1)
+        
+        s_gate = self.gate(full_input)
         
         h_graph_w = h_graph * s_gate
         h_mkt_w = p_context * (1 - s_gate)
@@ -68,9 +72,13 @@ class Decoder(torch.nn.Module):
         return self.net(torch.cat([h_graph_w, h_mkt_w], dim=-1))
 
 class ResearchTGN(torch.nn.Module):
-    def __init__(self, num_nodes, raw_msg_dim, memory_dim, time_dim, embedding_dim, num_parties, num_states):
+    def __init__(self, num_nodes, raw_msg_dim, memory_dim, time_dim, embedding_dim, 
+                 num_parties, num_states, 
+                 pol_dim=0, comp_dim=0):
         super().__init__()
+        self.embedding_dim = embedding_dim  # STORE THIS for forward usage
         self.price_emb_dim = 32
+        
         self.price_encoder = nn.Sequential(
             nn.BatchNorm1d(14),
             nn.Linear(14, self.price_emb_dim),
@@ -96,19 +104,58 @@ class ResearchTGN(torch.nn.Module):
             time_enc=self.memory.time_enc,
         )
         
+        # --- Static Embeddings (Always present) ---
         self.emb_party = nn.Embedding(num_parties + 1, 8) 
         self.emb_state = nn.Embedding(num_states + 1, 8)
         static_dim = 16
         
-        self.predictor = Decoder(embedding_dim + static_dim, self.price_emb_dim)
+        # --- Dynamic Projections (Optional) ---
+        self.pol_dim = pol_dim
+        self.comp_dim = comp_dim
+        
+        has_dynamic = False
+        if pol_dim > 0:
+            self.pol_proj = nn.Linear(pol_dim, 16)
+            has_dynamic = True
+            
+        if comp_dim > 0:
+            self.comp_proj = nn.Linear(comp_dim, 16)
+            has_dynamic = True
 
-    def encode_static(self, x_static_idx):
-        p = self.emb_party(x_static_idx[:, 0])
-        s = self.emb_state(x_static_idx[:, 1])
-        return torch.cat([p, s], dim=-1)
+        if has_dynamic:
+            static_dim += 16
+
+        # Decoder input
+        decoder_input_dim = (embedding_dim + static_dim) * 2 + self.price_emb_dim
+        self.predictor = Decoder(decoder_input_dim, self.price_emb_dim)
+
+    def encode_node_features(self, x_static_batch, x_dynamic=None, mode='pol'):
+        # 1. Static Embeddings
+        p = self.emb_party(x_static_batch[:, 0])
+        s = self.emb_state(x_static_batch[:, 1])
+        s_emb = torch.cat([p, s], dim=-1)
+        
+        # 2. Dynamic Features
+        if self.pol_dim > 0 or self.comp_dim > 0:
+            if mode == 'pol' and self.pol_dim > 0 and x_dynamic is not None:
+                d_emb = self.pol_proj(x_dynamic)
+                s_emb = torch.cat([s_emb, d_emb], dim=-1)
+            elif mode == 'comp' and self.comp_dim > 0 and x_dynamic is not None:
+                d_emb = self.comp_proj(x_dynamic)
+                s_emb = torch.cat([s_emb, d_emb], dim=-1)
+            else:
+                pad = torch.zeros((s_emb.size(0), 16), device=s_emb.device)
+                s_emb = torch.cat([s_emb, pad], dim=-1)
+
+        return s_emb
 
     def forward(self, n_id, edge_index, edge_attr):
         memory = self.memory.memory[n_id]
+        
+        # FIX: Correctly handle empty edges by returning proper embedding dim
+        if edge_index.numel() == 0:
+            return torch.zeros((len(n_id), self.embedding_dim), device=memory.device)
+            
         z = self.gnn(memory, edge_index, edge_attr)
         return z
 
