@@ -16,6 +16,10 @@ PROJECT_ROOT = Path(os.getenv("CHOCOLATE_PROJECT_ROOT", PROJECT_ROOT))
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
 PROCESSED_DATA_DIR = PROJECT_ROOT / "data" / "processed"
 PARQUET_DATA_DIR = PROJECT_ROOT / "data" / "parquet"
+LOBBYING_DIR = RAW_DATA_DIR / "lobbying_data_lobbyview"
+CAMPAIGN_FINANCE_DIR = RAW_DATA_DIR / "campaign_finance_open_secrets"
+DATA_527_DIR = RAW_DATA_DIR / "527_data_open_secrets"
+INDUSTRY_CROSSWALK_DIR = RAW_DATA_DIR / "industry_codes_NAICS"
 
 # --- Feature Flags ---
 INCLUDE_POLITICIAN_BIO = True 
@@ -24,6 +28,9 @@ INCLUDE_COMMITTEES = True
 INCLUDE_COMPANY_SIC = True
 INCLUDE_DISTRICT_ECON = False
 INCLUDE_COMPANY_FINANCIALS = False
+INCLUDE_LOBBYING_SPONSORSHIP = True
+INCLUDE_LOBBYING_VOTING = True
+INCLUDE_CAMPAIGN_FINANCE = True
 
 # --- Specific Data Paths ---
 IDEOLOGY_PATH = RAW_DATA_DIR / "ideology_scores_quarterly.csv"
@@ -32,6 +39,27 @@ COMMITTEE_PATH = RAW_DATA_DIR / "committee_assignments.csv"
 COMPANY_SIC_PATH = RAW_DATA_DIR / "company_sic_data.csv"
 COMPANY_FIN_PATH = RAW_DATA_DIR / "sec_quarterly_financials_unzipped.csv"
 CONGRESS_TERMS_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
+
+# Lobbying & Votes
+LOBBYING_BILLS_PATH = LOBBYING_DIR / "bills.csv"
+LOBBYING_CLIENTS_PATH = LOBBYING_DIR / "clients.csv"
+LOBBYING_REPORTS_PATH = LOBBYING_DIR / "reports.csv"
+LOBBYING_ISSUES_PATH = LOBBYING_DIR / "issue_text.csv"
+
+# VoteView Paths
+VOTEVIEW_VOTES_PATH = RAW_DATA_DIR / "HSall_votes.csv"
+VOTEVIEW_ROLLCALLS_PATH = RAW_DATA_DIR / "HSall_rollcalls.csv"
+
+# Campaign Finance Paths
+CAMPAIGN_CANDS_PATTERN = "cands*.csv"
+CAMPAIGN_PACS_PATTERN = "pacs*.csv"
+DATA_527_EXPENDITURES_PATH = DATA_527_DIR / "Expenditures.csv"
+DATA_527_COMMITTEES_PATH = DATA_527_DIR / "Cmtes527.csv"
+
+# Crosswalks
+NAICS_TO_SIC_PATH = INDUSTRY_CROSSWALK_DIR / "2017-NAICS-to-SIC-Crosswalk.csv"
+COMPANY_SIC_DATA_PATH = RAW_DATA_DIR / "company_sic_data.csv" 
+LEGISLATORS_CROSSWALK_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
 
 # Key Files
 TX_FILENAME = "ml_dataset_clean.csv"
@@ -43,6 +71,8 @@ PRICE_PATH = RAW_DATA_DIR / PRICE_FILENAME
 # Outputs
 RESULTS_DIR = PROJECT_ROOT / "results"
 LOGS_DIR = PROJECT_ROOT / "logs"
+LOBBYING_EVENTS_PATH = PROCESSED_DATA_DIR / "events_lobbying.csv"
+CAMPAIGN_FINANCE_EVENTS_PATH = PROCESSED_DATA_DIR / "events_campaign_finance.csv"
 
 # Make sure local directories exist
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)

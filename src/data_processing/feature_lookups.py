@@ -18,7 +18,7 @@ class FeatureLookupBase:
 class TermLookup:
     """
     Helper to map a date to a specific Congress term ID and bio details.
-    Source: data/raw/congress_all_terms_github.csv
+    Source: data/raw/congress_terms_all_github.csv
     """
     def __init__(self, terms_csv_path):
         self.df = pd.read_csv(terms_csv_path, parse_dates=['start', 'end'], low_memory=False)
