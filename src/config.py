@@ -60,6 +60,7 @@ DATA_527_COMMITTEES_PATH = DATA_527_DIR / "Cmtes527.csv"
 NAICS_TO_SIC_PATH = INDUSTRY_CROSSWALK_DIR / "2017-NAICS-to-SIC-Crosswalk.csv"
 COMPANY_SIC_DATA_PATH = RAW_DATA_DIR / "company_sic_data.csv" 
 LEGISLATORS_CROSSWALK_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
+CATCODE_CROSSWALK_PATH = INDUSTRY_CROSSWALK_DIR / "2013-CAT_to_SIC_to_NAICS_mappings.csv"
 
 # Key Files
 TX_FILENAME = "ml_dataset_clean.csv"

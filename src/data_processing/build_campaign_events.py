@@ -6,9 +6,12 @@ from src import config
 
 def load_legislator_map():
     if os.path.exists(config.LEGISLATORS_CROSSWALK_PATH):
-        df = pd.read_csv(config.LEGISLATORS_CROSSWALK_PATH)
+        # Added low_memory=False to suppress DtypeWarnings
+        df = pd.read_csv(config.LEGISLATORS_CROSSWALK_PATH, low_memory=False)
         if 'id_opensecrets' in df.columns and 'id_bioguide' in df.columns:
-            return df.set_index('id_opensecrets')['id_bioguide'].dropna().to_dict()
+            # Drop duplicates to prevent InvalidIndexError during mapping
+            mapping_df = df[['id_opensecrets', 'id_bioguide']].dropna().drop_duplicates(subset=['id_opensecrets'])
+            return mapping_df.set_index('id_opensecrets')['id_bioguide'].to_dict()
     print(f"WARNING: Legislator crosswalk not found at {config.LEGISLATORS_CROSSWALK_PATH}.")
     return {}
 
@@ -29,6 +32,8 @@ def build_campaign_events():
             continue
 
         df = df.dropna(subset=['CID', 'RealCode', 'estimated_filing_date'])
+        
+        # Safely map to BioGuide IDs using the deduplicated dictionary
         df['bioguide_id'] = df['CID'].map(cid_to_bioguide)
         df = df.dropna(subset=['bioguide_id'])
         
@@ -66,7 +71,7 @@ def build_campaign_events():
         # Aggregate to Weekly "Pulses"
         full_df = full_df.set_index('estimated_filing_date')
         
-        # We group and sum. No tqdm needed here as pandas vectorization handles this almost instantly.
+        # Group and sum
         agg_df = full_df.groupby([pd.Grouper(freq='W'), 'RealCode', 'bioguide_id'])['Amount'].sum().reset_index()
         
         agg_df.rename(columns={'estimated_filing_date': 'date', 'RealCode': 'industry_code', 'Amount': 'weight'}, inplace=True)
