@@ -13,7 +13,7 @@
 
 ```bash
 # Clone the repository
-git clone [https://github.com/syeugene/chocolate.git](https://github.com/syeugene/chocolate.git)
+git clone https://github.com/syeugene/chocolate.git
 cd chocolate
 
 # Create environment
@@ -27,11 +27,14 @@ pip install -e .
 
 ## Data Preparation
 
-Before running the pipeline, you must ensure the raw data files are present in `data/raw/` to support the enhanced feature lookups.
+### 1. Download and Extract Data
+Before running the pipeline, you must download the required dataset.
 
-### Required Raw Data
+1.  Download **data.zip** from this Google Drive folder: [Data Repository](https://drive.google.com/drive/u/0/folders/1oYfCPYj5FR3GoIQp2zWkE4IQ1I5yIP7V)
+2.  Unzip the contents into the `data/raw/` directory of this project.
 
-Ensure the following files exist in your `data/raw/` directory. These are used to generate the dynamic node features:
+### 2. Required Raw Data
+Once unzipped, ensure the following files exist in your `data/raw/` directory. These are used to generate the dynamic node features:
 
 * **congress_terms_all_github.csv**: Legislator terms and biographical data.
 * **ideology_scores_quarterly.csv**: DW-NOMINATE ideology scores.
@@ -104,4 +107,4 @@ Results are saved to `results/experiments/` and `results/baselines/`.
 
 ## Citation
 
-If you use this code found in `src/gap_tgn.py`, please cite the accompanying workshop paper:
+If you use this code found in `src/gap_tgn.py`, please cite the accompanying workshop paper.

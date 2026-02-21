@@ -3,6 +3,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Tuple
+from tqdm import tqdm
 
 import random
 import numpy as np
@@ -56,15 +57,38 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
     df['Traded'] = pd.to_datetime(df['Traded'])
     df = df.sort_values('Filed').reset_index(drop=True)
 
-    if len(df) != len(data.src):
-        logger.warning(
-            "Mismatch between CSV rows and temporal data (csv=%s, data=%s). "
-            "Truncating to minimum length.",
-            len(df),
-            len(data.src),
-        )
-        min_len = min(len(df), len(data.src))
-        df = df.iloc[:min_len].reset_index(drop=True)
+    # Note: df length corresponds to ONLY the trades, not the full graph (which has millions of influence edges)
+    # The TemporalData loader handles the full graph, but we need to ensure the test_df aligns correctly.
+    # Since our test loop indexes using the batch size, we only map the trade indices back to the df.
+
+    # --- NEW: Calculate True Global Time Anchor ---
+    global_t_base = df['Filed'].min().timestamp()
+    if os.path.exists("data/processed/events_lobbying.csv"):
+        lobby_dates = pd.read_csv("data/processed/events_lobbying.csv", usecols=['date'])
+        global_t_base = min(global_t_base, pd.to_datetime(lobby_dates['date']).min().timestamp())
+        
+    if os.path.exists("data/processed/events_campaign_finance.csv"):
+        camp_dates = pd.read_csv("data/processed/events_campaign_finance.csv", usecols=['date'])
+        global_t_base = min(global_t_base, pd.to_datetime(camp_dates['date']).min().timestamp())
+
+    trade_mask = (data.msg[:, 3] == 0)
+    min_trade_t = data.t[trade_mask].min().item()
+    min_trade_real = (df['Filed'].astype('int64') // 10**9).min()
+    global_t_base = min_trade_real - min_trade_t
+    # ----------------------------------------------
+
+    print("\n--- SANITY CHECK DIAGNOSTICS ---")
+    print(f"Total Edges in Graph: {data.t.size(0)}")
+    print(f"Graph t min: {data.t.min().item()}")
+    print(f"Graph t max: {data.t.max().item()}")
+    print(f"Min Trade t in Graph: {min_trade_t}")
+    print(f"Min Trade Real (Unix): {min_trade_real}")
+    print(f"Calculated Global Base: {global_t_base}")
+    
+    test_ts = pd.Timestamp(start_year, 1, 1).timestamp()
+    print(f"Test Start {start_year}-01 Real (Unix): {test_ts}")
+    print(f"Test Start {start_year}-01 Graph t: {int(test_ts - global_t_base)}")
+    print("--------------------------------\n")
 
     num_nodes = getattr(data, 'num_nodes', int(torch.cat([data.src, data.dst]).max().item()) + 1)
     raw_msg_dim = int(data.msg.size(-1))
@@ -96,10 +120,20 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
     out_path = Path(out_dir)
     out_path.mkdir(exist_ok=True, parents=True)
 
-    def slice_data(indices):
-        idx = torch.as_tensor(indices, dtype=torch.long, device=device)
+    def slice_data_by_time(mask_start, mask_end, gap_mode=False):
+        # We slice based on the timestamp of the edges
+        t_sec = data.t.cpu().numpy() + data.t.min().item() # Approx true timestamp depending on normalization
+        # Note: Since slicing millions of edges manually is complex, we rely on the temporal index.
+        # For full graph, we must convert test_start and next_month to the normalized 't' scale.
+        t_base = pd.to_datetime('2014-01-01').timestamp() # Fallback, assumes base_time
+        
+        start_t = (mask_start.timestamp() - t_base) if mask_start else 0
+        end_t = (mask_end.timestamp() - t_base) if mask_end else float('inf')
+        
+        idx = torch.where((data.t >= start_t) & (data.t < end_t))[0]
+        
         if idx.numel() == 0:
-            return TemporalData(
+             return TemporalData(
                 src=torch.empty((0,), dtype=torch.long, device=device),
                 dst=torch.empty((0,), dtype=torch.long, device=device),
                 t=torch.empty((0,), dtype=torch.long, device=device),
@@ -108,8 +142,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 price_seq=torch.empty((0, data.price_seq.size(-1)), dtype=torch.float, device=device),
                 trade_t=torch.empty((0,), dtype=torch.long, device=device),
             )
-        
-        # Standard slice
+             
         sliced = TemporalData(
             src=data.src[idx],
             dst=data.dst[idx],
@@ -119,13 +152,8 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             price_seq=data.price_seq[idx],
             trade_t=data.trade_t[idx],
         )
-        
-        # Slice Dynamic Features if present
-        if hasattr(data, 'x_pol'):
-            sliced.x_pol = data.x_pol[idx]
-        if hasattr(data, 'x_comp'):
-            sliced.x_comp = data.x_comp[idx]
-            
+        if hasattr(data, 'x_pol'): sliced.x_pol = data.x_pol[idx]
+        if hasattr(data, 'x_comp'): sliced.x_comp = data.x_comp[idx]
         return sliced
 
     for year in range(start_year, end_year + 1):
@@ -137,15 +165,28 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
             test_start = pd.Timestamp(year, month, 1)
             next_month = test_start + pd.DateOffset(months=1)
-            df['Resolution'] = df['Traded'] + pd.to_timedelta(h_days, unit='D')
             
-            train_mask_df = (df['Filed'] < test_start) & (df['Resolution'] < test_start)
-            gap_mask_df = (df['Filed'] < test_start) & (df['Resolution'] >= test_start)
-            test_mask_df = (df['Filed'] >= test_start) & (df['Filed'] < next_month)
+            # Use temporal index logic for the full graph
+            t_base = df['Filed'].min().timestamp()
+            test_start_t = int(test_start.timestamp() - global_t_base)
+            next_month_t = int(next_month.timestamp() - global_t_base)
+            
+            # Slicing the full graph tensor directly
+            train_idx = torch.where((data.t < test_start_t) & ((data.trade_t + h_seconds) < test_start_t))[0]
+            gap_idx = torch.where((data.t < test_start_t) & ((data.trade_t + h_seconds) >= test_start_t))[0]
+            test_idx = torch.where((data.t >= test_start_t) & (data.t < next_month_t))[0]
 
-            train_data = slice_data(df[train_mask_df].index)
-            gap_data = slice_data(df[gap_mask_df].index)
-            test_data = slice_data(df[test_mask_df].index)
+            def make_slice(idx):
+                if idx.numel() == 0:
+                    return TemporalData(src=torch.empty((0,), dtype=torch.long, device=device), dst=torch.empty((0,), dtype=torch.long, device=device), t=torch.empty((0,), dtype=torch.long, device=device), msg=torch.empty((0, data.msg.size(-1)), dtype=torch.float, device=device), y=torch.empty((0, data.y.size(-1)), dtype=torch.float, device=device), price_seq=torch.empty((0, data.price_seq.size(-1)), dtype=torch.float, device=device), trade_t=torch.empty((0,), dtype=torch.long, device=device))
+                sliced = TemporalData(src=data.src[idx], dst=data.dst[idx], t=data.t[idx], msg=data.msg[idx], y=data.y[idx], price_seq=data.price_seq[idx], trade_t=data.trade_t[idx])
+                if hasattr(data, 'x_pol'): sliced.x_pol = data.x_pol[idx]
+                if hasattr(data, 'x_comp'): sliced.x_comp = data.x_comp[idx]
+                return sliced
+
+            train_data = make_slice(train_idx)
+            gap_data = make_slice(gap_idx)
+            test_data = make_slice(test_idx)
 
             if len(test_data.src) == 0:
                 logger.warning("No data for %s, skipping.", test_start.strftime('%Y-%m'))
@@ -154,7 +195,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             raw_train = train_data.y[:, h_idx]
             train_targets, train_label_mask = direction_targets(raw_train, alpha)
             train_resolved = (train_data.trade_t + h_seconds) < train_data.t.max()
-            train_mask = train_label_mask & train_resolved
+            
+            # --- PHASE 3.3 MASKING: Only consider Trade Edges (edge_type == 0) ---
+            train_is_trade = (train_data.msg[:, 3] == 0)
+            train_mask = train_label_mask & train_resolved & train_is_trade
 
             if train_mask.sum() == 0:
                 logger.warning("No resolved training labels for %s, skipping.", test_start.strftime('%Y-%m'))
@@ -172,7 +216,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 embedding_dim=100,
                 num_parties=num_parties,
                 num_states=num_states,
-                pol_dim=pol_dim,  # Pass dynamic dims
+                pol_dim=pol_dim,  
                 comp_dim=comp_dim
             ).to(device)
 
@@ -180,8 +224,8 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
             neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
 
-            train_loader = TemporalDataLoader(train_data, batch_size=200, drop_last=True)
-            gap_loader = TemporalDataLoader(gap_data, batch_size=200)
+            train_loader = TemporalDataLoader(train_data, batch_size=2048, drop_last=True)
+            gap_loader = TemporalDataLoader(gap_data, batch_size=2048)
 
             for epoch in range(1, epochs + 1):
                 model.train()
@@ -190,7 +234,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 model.memory.detach()
                 epoch_loss = []
 
-                for batch in train_loader:
+                for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} Training", leave=False):
                     batch = batch.to(device)
                     optimizer.zero_grad()
 
@@ -199,7 +243,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     targets, label_mask = direction_targets(raw_y, alpha)
                     batch_max_t = t.max()
                     resolved_mask = (batch.trade_t + h_seconds) < batch_max_t
-                    train_batch_mask = label_mask & resolved_mask
+                    
+                    # --- MASK: Only calculate loss on Trades ---
+                    is_trade = (msg[:, 3] == 0)
+                    train_batch_mask = label_mask & resolved_mask & is_trade
 
                     p_context = model.get_price_embedding(batch.price_seq)
                     aug_msg = torch.cat([msg, p_context], dim=1)
@@ -208,7 +255,6 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
 
-                    # Historical Edge Features
                     hist_y = data.y[e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
                     hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
@@ -225,19 +271,15 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                         dim=-1,
                     )
 
-                    # Forward Pass
                     z = model(n_id, edge_index, edge_attr)
                     z_src = z[[assoc[i.item()] for i in src]]
                     z_dst = z[[assoc[i.item()] for i in dst]]
                     
-                    # --- FIXED: Use updated encode_node_features with dynamic features ---
                     x_pol_batch = getattr(batch, 'x_pol', None)
                     x_comp_batch = getattr(batch, 'x_comp', None)
-                    
                     s_src = model.encode_node_features(data.x_static[src], x_dynamic=x_pol_batch, mode='pol')
                     s_dst = model.encode_node_features(data.x_static[dst], x_dynamic=x_comp_batch, mode='comp')
-                    # -------------------------------------------------------------
-
+                    
                     preds = model.predictor(z_src, z_dst, s_src, s_dst, p_context)
 
                     if train_batch_mask.sum() > 0:
@@ -253,7 +295,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 if len(gap_data.src) > 0:
                     model.eval()
                     with torch.no_grad():
-                        for batch in gap_loader:
+                        for batch in tqdm(gap_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
                             batch = batch.to(device)
                             src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                             p_context = model.get_price_embedding(batch.price_seq)
@@ -264,17 +306,20 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 logger.info("    Epoch %s/%s | Loss: %.4f", epoch, epochs, float(np.mean(epoch_loss)) if epoch_loss else 0.0)
 
             model.eval()
-            test_loader = TemporalDataLoader(test_data, batch_size=200)
+            test_loader = TemporalDataLoader(test_data, batch_size=2048)
             all_preds, all_targets = [], []
-            test_df_slice = df[test_mask_df]
-            current_log_idx = 0
 
             with torch.no_grad():
-                for batch in test_loader:
+                for batch in tqdm(test_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
                     batch = batch.to(device)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     raw_y = batch.y[:, h_idx]
                     targets, label_mask = direction_targets(raw_y, alpha)
+                    
+                    # --- MASK: Only track Test metrics on Trades ---
+                    is_trade = (msg[:, 3] == 0)
+                    test_batch_mask = label_mask & is_trade
+                    
                     batch_max_t = t.max()
 
                     p_context = model.get_price_embedding(batch.price_seq)
@@ -284,7 +329,6 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
 
-                    # Historical features for neighbors
                     hist_y = data.y[e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
                     hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
@@ -305,41 +349,30 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     z_src = z[[assoc[i.item()] for i in src]]
                     z_dst = z[[assoc[i.item()] for i in dst]]
                     
-                    # --- FIXED: Use updated encode_node_features with dynamic features ---
                     x_pol_batch = getattr(batch, 'x_pol', None)
                     x_comp_batch = getattr(batch, 'x_comp', None)
                     s_src = model.encode_node_features(data.x_static[src], x_dynamic=x_pol_batch, mode='pol')
                     s_dst = model.encode_node_features(data.x_static[dst], x_dynamic=x_comp_batch, mode='comp')
-                    # -------------------------------------------------------------
                     
                     preds = model.predictor(z_src, z_dst, s_src, s_dst, p_context).sigmoid()
 
-                    if label_mask.sum() > 0:
-                        batch_preds = preds[label_mask].cpu().numpy().flatten()
-                        batch_targets = targets[label_mask].cpu().numpy().flatten()
+                    if test_batch_mask.sum() > 0:
+                        batch_preds = preds[test_batch_mask].cpu().numpy().flatten()
+                        batch_targets = targets[test_batch_mask].cpu().numpy().flatten()
                         all_preds.extend(batch_preds)
                         all_targets.extend(batch_targets)
                         
-                        batch_size_actual = len(src)
-                        batch_df_rows = test_df_slice.iloc[current_log_idx : current_log_idx + batch_size_actual]
-                        mask_np = label_mask.cpu().numpy().astype(bool)
-                        valid_rows = batch_df_rows.iloc[mask_np]
-                        
-                        for i in range(len(valid_rows)):
-                            row = valid_rows.iloc[i]
-                            rec = {
-                                'TransactionID': row['transaction_id'],
-                                'Date': row['Filed'],
-                                'Model': 'TGN',
-                                'True_Up': batch_targets[i],
-                                'Prob_Up': batch_preds[i],
-                                'Pred_Up': 1.0 if batch_preds[i] > 0.5 else 0.0
-                            }
-                            predictions_log.append(rec)
-                            
-                        current_log_idx += batch_size_actual
-                    else:
-                        current_log_idx += len(src)
+                        # Store in log
+                        for i, is_valid in enumerate(test_batch_mask.cpu().numpy()):
+                            if is_valid:
+                                rec = {
+                                    'Date_Norm': t[i].item(),
+                                    'Model': 'TGN',
+                                    'True_Up': targets[i].item(),
+                                    'Prob_Up': preds[i].item(),
+                                    'Pred_Up': 1.0 if preds[i].item() > 0.5 else 0.0
+                                }
+                                predictions_log.append(rec)
 
                     model.memory.update_state(src, dst, t, aug_msg)
                     neighbor_loader.insert(src, dst)
@@ -360,7 +393,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             yearly_targets.extend(all_targets)
 
         if yearly_targets:
-            report = classification_report(yearly_targets, np.array(yearly_preds) > 0.5, target_names=['Down', 'Up'])
+            report = classification_report(yearly_targets, np.array(yearly_preds) > 0.5, target_names=['Down', 'Up'], zero_division=0)
             logger.info(f"\n--- Classification Report {year} ---\n{report}")
             with open(out_path / f"report_{year}_{horizon}.txt", "w") as f:
                 f.write(report)
