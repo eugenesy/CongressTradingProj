@@ -1,6 +1,6 @@
-# GAP-TGN: Graph Alpha Prediction for Congressional Trading
+# Capitol Gains: GAP-TGN (Graph Alpha Prediction for Congressional Trading)
 
-**GAP-TGN** is a specialized Temporal Graph Network (TGN) designed to detect alpha signals in congressional trading disclosures. Unlike traditional tabular methods, GAP-TGN explicitly models the evolving network of legislators and corporate entities, using an asynchronous propagation strategy to handle reporting delays.
+**GAP-TGN** is the specialized Temporal Graph Network (TGN) driving the Capitol Gains project, designed to detect alpha signals in congressional trading disclosures. Unlike traditional tabular methods, GAP-TGN explicitly models the evolving network of legislators and corporate entities, using an asynchronous propagation strategy to handle reporting delays.
 
 ## Key Features
 
@@ -13,7 +13,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/syeugene/chocolate.git
+git clone [https://github.com/syeugene/chocolate.git](https://github.com/syeugene/chocolate.git)
 cd chocolate
 
 # Create environment
@@ -27,54 +27,37 @@ pip install -e .
 
 ## Data Preparation
 
-### 1. Download and Extract Data
-Before running the pipeline, you must download the required dataset.
+### 1. Download Processed Data (Recommended)
+To get started quickly without handling 90GB of raw files, you can download the pre-compiled, processed dataset. 
 
-1.  Download **data.zip** from this Google Drive folder: [Data Repository](https://drive.google.com/drive/u/0/folders/1oYfCPYj5FR3GoIQp2zWkE4IQ1I5yIP7V)
-2.  Unzip the contents into the `data/raw/` directory of this project.
+1. Download the processed data zip file from this Google Drive folder: [Data Repository](https://drive.google.com/drive/u/0/folders/1oYfCPYj5FR3GoIQp2zWkE4IQ1I5yIP7V)
+2. Unzip the contents directly into your project's `data/` directory. It should contain the `processed/` subfolder, `temporal_data.pt`, and `price_sequences.pt`.
 
-### 2. Required Raw Data
-Once unzipped, ensure the following files exist in your `data/raw/` directory. These are used to generate the dynamic node features:
-
-* **congress_terms_all_github.csv**: Legislator terms and biographical data.
-* **ideology_scores_quarterly.csv**: DW-NOMINATE ideology scores.
-* **committee_assignments.csv**: Historical committee memberships.
-* **company_sic_data.csv**: SIC industry codes for tickers.
-* **sec_quarterly_financials_unzipped.csv**: Corporate financial fundamentals.
-* **district_industries/**: Directory containing Census Bureau economic data for districts.
-
-## Usage
-
-### 1. Configure Feature Flags
-
-You can toggle which features are included in the graph by editing `src/config.py`.
+**Pre-configured Feature Flags:**
+Because the graph features are baked directly into the tensor data during generation, this processed dataset comes with the following configuration hard-coded:
 
 ```python
-# src/config.py
-
-# Set these to True/False to control feature generation
 INCLUDE_POLITICIAN_BIO = True 
 INCLUDE_IDEOLOGY = True
 INCLUDE_COMMITTEES = True
 INCLUDE_COMPANY_SIC = True
 INCLUDE_DISTRICT_ECON = False
 INCLUDE_COMPANY_FINANCIALS = False
+INCLUDE_LOBBYING_SPONSORSHIP = True
+INCLUDE_LOBBYING_VOTING = True
+INCLUDE_CAMPAIGN_FINANCE = True
 ```
 
-### 2. Build Temporal Data
+### 2. Customizing Data Features (Raw Data)
+If you would like to re-generate the processed data with a different combination of the feature flags listed above, you will need the full 90GB raw dataset. **Please reach out to the project creators to request access to the raw data files.**
 
-Once your config is set and raw data is in place, run the temporal data script. This will generate the `data/temporal_data.pt` file containing the graph structure and your enabled feature vectors (`x_pol`, `x_comp`).
+Once obtained, you will place the raw files in the `data/raw/` directory, adjust the flags in `src/config.py`, and run `python src/temporal_data.py` to build a custom `temporal_data.pt` file.
 
-```bash
-# Generates data/temporal_data.pt
-python src/temporal_data.py
-```
+## Usage
 
-> **Note**: This script will print the mapped dimensions of your features (e.g., `Pol_Dim=95`) during execution.
+### 1. Train GAP-TGN
 
-### 3. Train GAP-TGN
-
-Train the model. The script automatically detects the feature dimensions in `temporal_data.pt` and adjusts the model architecture accordingly.
+Assuming you have downloaded the processed data, you can immediately train the model. The script automatically detects the feature dimensions in `temporal_data.pt` and adjusts the model architecture accordingly.
 
 ```bash
 # Using the installed entry point
@@ -84,7 +67,7 @@ chocolate-train --horizon 6M --epochs 5 --seed 42
 python scripts/train_gap_tgn.py --horizon 6M
 ```
 
-### 4. Train Baselines (Benchmarking)
+### 2. Train Baselines (Benchmarking)
 
 Run comparative baselines (XGBoost, Logistic Regression, MLP) on the same data split.
 
@@ -92,7 +75,7 @@ Run comparative baselines (XGBoost, Logistic Regression, MLP) on the same data s
 chocolate-baselines --horizon 6M --start-year 2019 --end-year 2024
 ```
 
-### 5. Evaluate Results
+### 3. Evaluate Results
 
 Results are saved to `results/experiments/` and `results/baselines/`.
 
