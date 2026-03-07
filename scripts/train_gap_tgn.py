@@ -32,8 +32,8 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = False
+    torch.backends.cudnn.benchmark = True
 
 def direction_targets(raw_return: torch.Tensor, alpha: float) -> Tuple[torch.Tensor, torch.Tensor]:
     has_label = ~torch.isnan(raw_return)
@@ -48,9 +48,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
     logger.info("Loading Data...")
     try:
-        data = torch.load("data/temporal_data.pt", weights_only=False).to(device)
+        data = torch.load("data/temporal_data.pt", weights_only=False)
     except Exception:
-        data = torch.load("data/temporal_data.pt").to(device)
+        data = torch.load("data/temporal_data.pt")
+    data = data.to(device, non_blocking=True)
 
     df = pd.read_csv("data/processed/ml_dataset_clean.csv")
     df['Filed'] = pd.to_datetime(df['Filed'])
@@ -178,8 +179,9 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
             def make_slice(idx):
                 if idx.numel() == 0:
-                    return TemporalData(src=torch.empty((0,), dtype=torch.long, device=device), dst=torch.empty((0,), dtype=torch.long, device=device), t=torch.empty((0,), dtype=torch.long, device=device), msg=torch.empty((0, data.msg.size(-1)), dtype=torch.float, device=device), y=torch.empty((0, data.y.size(-1)), dtype=torch.float, device=device), price_seq=torch.empty((0, data.price_seq.size(-1)), dtype=torch.float, device=device), trade_t=torch.empty((0,), dtype=torch.long, device=device))
+                    return TemporalData(src=torch.empty((0,), dtype=torch.long, device=device), dst=torch.empty((0,), dtype=torch.long, device=device), t=torch.empty((0,), dtype=torch.long, device=device), msg=torch.empty((0, data.msg.size(-1)), dtype=torch.float, device=device), y=torch.empty((0, data.y.size(-1)), dtype=torch.float, device=device), price_seq=torch.empty((0, data.price_seq.size(-1)), dtype=torch.float, device=device), trade_t=torch.empty((0,), dtype=torch.long, device=device), global_e_id=torch.empty((0,), dtype=torch.long, device=device))
                 sliced = TemporalData(src=data.src[idx], dst=data.dst[idx], t=data.t[idx], msg=data.msg[idx], y=data.y[idx], price_seq=data.price_seq[idx], trade_t=data.trade_t[idx])
+                sliced.global_e_id = idx
                 if hasattr(data, 'x_pol'): sliced.x_pol = data.x_pol[idx]
                 if hasattr(data, 'x_comp'): sliced.x_comp = data.x_comp[idx]
                 return sliced
@@ -223,6 +225,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             optimizer = torch.optim.Adam(model.parameters(), lr=0.0005)
             criterion = torch.nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], device=device))
             neighbor_loader = LastNeighborLoader(num_nodes, size=30, device=device)
+            # Manual garbage reduction
 
             train_loader = TemporalDataLoader(train_data, batch_size=2048, drop_last=True)
             gap_loader = TemporalDataLoader(gap_data, batch_size=2048)
@@ -233,9 +236,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 neighbor_loader.reset_state()
                 model.memory.detach()
                 epoch_loss = []
+                inserted_global_e_ids = [torch.empty(0, dtype=torch.long, device=device)]
 
                 for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} Training", leave=False):
-                    batch = batch.to(device)
+                    batch = batch.to(device, non_blocking=True)
                     optimizer.zero_grad()
 
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
@@ -254,26 +258,38 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id = torch.cat([src, dst]).unique()
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
+                    
+                    if e_id.numel() > 0 and inserted_global_e_ids:
+                        all_e_ids = torch.cat(inserted_global_e_ids)
+                        valid_eid_mask = (e_id >= 0) & (e_id < all_e_ids.numel())
+                        safe_e_id = e_id.clone()
+                        safe_e_id[~valid_eid_mask] = 0
+                        mapped_e_id = all_e_ids[safe_e_id]
+                    else:
+                        mapped_e_id = torch.zeros(e_id.numel(), dtype=torch.long, device=device) if e_id.numel() > 0 else torch.empty(0, dtype=torch.long, device=device)
 
-                    hist_y = data.y[e_id, h_idx]
+                    hist_y = data.y[mapped_e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
-                    hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
+                    hist_resolved = (data.trade_t[mapped_e_id] + h_seconds) < batch_max_t
                     hist_is_resolved = (hist_resolved & hist_label_mask).float().unsqueeze(-1)
                     hist_targets = hist_targets.unsqueeze(-1)
                     masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
 
-                    age_feat = torch.log1p((batch_max_t - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]
+                    age_feat = torch.log1p((batch_max_t - data.t[mapped_e_id]).float() / 86400.0).unsqueeze(-1)
+                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[mapped_e_id]
                     rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
-                    hist_price_emb = model.get_price_embedding(data.price_seq[e_id])
+                    hist_price_emb = model.get_price_embedding(data.price_seq[mapped_e_id])
                     edge_attr = torch.cat(
-                        [rel_t_enc, data.msg[e_id], hist_price_emb, masked_label, age_feat],
+                        [data.msg[mapped_e_id], hist_price_emb, rel_t_enc, masked_label, age_feat],
                         dim=-1,
                     )
 
                     z = model(n_id, edge_index, edge_attr)
-                    z_src = z[[assoc[i.item()] for i in src]]
-                    z_dst = z[[assoc[i.item()] for i in dst]]
+                    
+                    z_src_idx = [assoc.get(i.item(), 0) for i in src]
+                    z_dst_idx = [assoc.get(i.item(), 0) for i in dst]
+                    z_src = z[z_src_idx]
+                    z_dst = z[z_dst_idx]
                     
                     x_pol_batch = getattr(batch, 'x_pol', None)
                     x_comp_batch = getattr(batch, 'x_comp', None)
@@ -288,20 +304,28 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                         optimizer.step()
                         epoch_loss.append(loss.item())
 
-                    model.memory.update_state(src, dst, t, aug_msg)
-                    neighbor_loader.insert(src, dst)
+                    valid_mask = (src < num_nodes) & (dst < num_nodes)
+                    if valid_mask.sum() > 0:
+                        model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                        neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                        inserted_global_e_ids.append(batch.global_e_id[valid_mask])
+                    
                     model.memory.detach()
 
                 if len(gap_data.src) > 0:
                     model.eval()
                     with torch.no_grad():
                         for batch in tqdm(gap_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
-                            batch = batch.to(device)
+                            batch = batch.to(device, non_blocking=True)
                             src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                             p_context = model.get_price_embedding(batch.price_seq)
                             aug_msg = torch.cat([msg, p_context], dim=1)
-                            model.memory.update_state(src, dst, t, aug_msg)
-                            neighbor_loader.insert(src, dst)
+                            
+                            valid_mask = (src < num_nodes) & (dst < num_nodes)
+                            if valid_mask.sum() > 0:
+                                model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                                neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                                inserted_global_e_ids.append(batch.global_e_id[valid_mask])
 
                 logger.info("    Epoch %s/%s | Loss: %.4f", epoch, epochs, float(np.mean(epoch_loss)) if epoch_loss else 0.0)
 
@@ -311,7 +335,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
 
             with torch.no_grad():
                 for batch in tqdm(test_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
-                    batch = batch.to(device)
+                    batch = batch.to(device, non_blocking=True)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     raw_y = batch.y[:, h_idx]
                     targets, label_mask = direction_targets(raw_y, alpha)
@@ -328,20 +352,29 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id = torch.cat([src, dst]).unique()
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
+                    
+                    if e_id.numel() > 0 and inserted_global_e_ids:
+                        all_e_ids = torch.cat(inserted_global_e_ids)
+                        valid_eid_mask = (e_id >= 0) & (e_id < all_e_ids.numel())
+                        safe_e_id = e_id.clone()
+                        safe_e_id[~valid_eid_mask] = 0
+                        mapped_e_id = all_e_ids[safe_e_id]
+                    else:
+                        mapped_e_id = torch.zeros(e_id.numel(), dtype=torch.long, device=device) if e_id.numel() > 0 else torch.empty(0, dtype=torch.long, device=device)
 
-                    hist_y = data.y[e_id, h_idx]
+                    hist_y = data.y[mapped_e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
-                    hist_resolved = (data.trade_t[e_id] + h_seconds) < batch_max_t
+                    hist_resolved = (data.trade_t[mapped_e_id] + h_seconds) < batch_max_t
                     hist_is_resolved = (hist_resolved & hist_label_mask).float().unsqueeze(-1)
                     hist_targets = hist_targets.unsqueeze(-1)
                     masked_label = hist_targets * hist_is_resolved + 0.5 * (1 - hist_is_resolved)
 
-                    age_feat = torch.log1p((batch_max_t - data.t[e_id]).float() / 86400.0).unsqueeze(-1)
-                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[e_id]
+                    age_feat = torch.log1p((batch_max_t - data.t[mapped_e_id]).float() / 86400.0).unsqueeze(-1)
+                    rel_t = model.memory.last_update[n_id[edge_index[1]]] - data.t[mapped_e_id]
                     rel_t_enc = model.memory.time_enc(rel_t.to(torch.float))
-                    hist_price_emb = model.get_price_embedding(data.price_seq[e_id])
+                    hist_price_emb = model.get_price_embedding(data.price_seq[mapped_e_id])
                     edge_attr = torch.cat(
-                        [rel_t_enc, data.msg[e_id], hist_price_emb, masked_label, age_feat],
+                        [data.msg[mapped_e_id], hist_price_emb, rel_t_enc, masked_label, age_feat],
                         dim=-1,
                     )
 
@@ -357,10 +390,10 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     preds = model.predictor(z_src, z_dst, s_src, s_dst, p_context).sigmoid()
 
                     if test_batch_mask.sum() > 0:
-                        batch_preds = preds[test_batch_mask].cpu().numpy().flatten()
-                        batch_targets = targets[test_batch_mask].cpu().numpy().flatten()
-                        all_preds.extend(batch_preds)
-                        all_targets.extend(batch_targets)
+                        batch_preds = preds[test_batch_mask].clone()
+                        batch_targets = targets[test_batch_mask].clone()
+                        all_preds.extend(batch_preds.cpu().numpy().flatten())
+                        all_targets.extend(batch_targets.cpu().numpy().flatten())
                         
                         # Store in log
                         for i, is_valid in enumerate(test_batch_mask.cpu().numpy()):
@@ -374,8 +407,11 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                                 }
                                 predictions_log.append(rec)
 
-                    model.memory.update_state(src, dst, t, aug_msg)
-                    neighbor_loader.insert(src, dst)
+                    valid_mask = (src < num_nodes) & (dst < num_nodes)
+                    if valid_mask.sum() > 0:
+                        model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                        neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                        inserted_global_e_ids.append(batch.global_e_id[valid_mask])
 
             if len(all_targets) == 0:
                 logger.warning("No labeled targets for %s, skipping.", test_start.strftime('%Y-%m'))
@@ -391,12 +427,23 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             results.append({'Year': year, 'Month': month, 'AUC': res_auc, 'Acc': res_acc, 'F1': res_f1, 'Count': count})
             yearly_preds.extend(all_preds)
             yearly_targets.extend(all_targets)
+            
+            # Save partial progress in case of crash
+            pd.DataFrame(results).to_csv(out_path / f"study_{horizon}.csv", index=False)
+            pd.DataFrame(predictions_log).to_csv(out_path / f"predictions_tgn_{horizon}.csv", index=False)
+            
+            # End of Month cleanup
 
         if yearly_targets:
             report = classification_report(yearly_targets, np.array(yearly_preds) > 0.5, target_names=['Down', 'Up'], zero_division=0)
             logger.info(f"\n--- Classification Report {year} ---\n{report}")
             with open(out_path / f"report_{year}_{horizon}.txt", "w") as f:
                 f.write(report)
+                
+            # End of Year cleanup
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
 
     res_df = pd.DataFrame(results)
     print("\n" + "=" * 40)

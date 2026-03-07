@@ -67,6 +67,19 @@ chocolate-train --horizon 6M --epochs 5 --seed 42
 python scripts/train_gap_tgn.py --horizon 6M
 ```
 
+#### Multi-GPU Parallel Training (Optimized)
+For extremely long evaluation windows (e.g., 2019-2023 across multiple horizons), the base `train_gap_tgn.py` script has been aggressively optimized for PyTorch:
+- **cuDNN Auto-Tuning** (`benchmark=True`)
+- **Asynchronous PCIe Transfers** (`non_blocking=True`)
+- **Streamlined Garbage Collection** (Eliminated explicit loop `gc.collect()`)
+- **Deferred Tensor Offloading** (Accumulate vectors in VRAM before shipping to CPU)
+
+To utilize multiple GPUs simultaneously and cut total evaluation time in half, run the parallel bash wrapper:
+```bash
+# Splits 3M, 6M, 12M to GPU 0 and 18M, 24M to GPU 1
+bash run_parallel_19_23.sh
+```
+
 ### 2. Train Baselines (Benchmarking)
 
 Run comparative baselines (XGBoost, Logistic Regression, MLP) on the same data split.
