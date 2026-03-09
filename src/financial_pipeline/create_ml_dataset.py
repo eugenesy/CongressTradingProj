@@ -20,8 +20,7 @@ def create_ml_dataset(input_file, output_file):
             'TickerType', 'Trade_Size_USD', 'Traded', 'Transaction', 'Filing_Gap'
         ]
         additional_columns = [
-            'Excess_Return_1W', 'Excess_Return_2W',
-            'Excess_Return_1M', 'Excess_Return_2M', 'Excess_Return_3M', 'Excess_Return_4M',
+            'Excess_Return_1M', 'Excess_Return_2M', 'Excess_Return_3M', 
             'Excess_Return_6M', 'Excess_Return_8M', 'Excess_Return_12M', 
             'Excess_Return_18M', 'Excess_Return_24M'
         ]

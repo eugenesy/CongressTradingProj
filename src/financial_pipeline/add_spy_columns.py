@@ -37,8 +37,8 @@ def add_spy_columns(
     spy_data = load_checkpoint(spy_pkl)
 
     spy_cols = [
-        'SPY_TradeDate', 'SPY_1Week', 'SPY_2Week', 
-        'SPY_1Month', 'SPY_2Months', 'SPY_3Months', 'SPY_4Months',
+        'SPY_TradeDate', 
+        'SPY_1Month', 'SPY_2Months', 'SPY_3Months', 
         'SPY_6Months', 'SPY_8Months', 'SPY_12Months', 
         'SPY_18Months', 'SPY_24Months'
     ]
@@ -51,12 +51,9 @@ def add_spy_columns(
 
         date_periods = {
             'TradeDate': trade_date + relativedelta(days=1),
-            '1Week': trade_date + relativedelta(weeks=1),
-            '2Week': trade_date + relativedelta(weeks=2),
             '1Month': trade_date + relativedelta(months=1),
             '2Months': trade_date + relativedelta(months=2),
             '3Months': trade_date + relativedelta(months=3),
-            '4Months': trade_date + relativedelta(months=4),
             '6Months': trade_date + relativedelta(months=6),
             '8Months': trade_date + relativedelta(months=8),
             '12Months': trade_date + relativedelta(months=12),

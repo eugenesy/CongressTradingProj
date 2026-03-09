@@ -41,8 +41,7 @@ def add_closing_prices_to_transactions(
 
     for col in [
         'Close_TradeDate', 
-        'Close_1Week', 'Close_2Weeks',
-        'Close_1Month', 'Close_2Months', 'Close_3Months', 'Close_4Months',
+        'Close_1Month', 'Close_2Months', 'Close_3Months', 
         'Close_6Months', 'Close_8Months', 'Close_12Months', 
         'Close_18Months', 'Close_24Months'
     ]:
@@ -53,19 +52,16 @@ def add_closing_prices_to_transactions(
     for idx, row in tqdm(df.iterrows(), total=len(df)):
         if idx in processed_indices:
             continue
-        ticker = row['Ticker']
+        ticker = row['Appropriate_Ticker']
         trade_date = row['Filed']
         if pd.isna(ticker) or pd.isna(trade_date) or pd.to_datetime(trade_date) > current_date:
             processed_indices.add(idx)
             continue
         periods = {
             'TradeDate': trade_date + relativedelta(days=1),
-            '1Week': trade_date + relativedelta(weeks=1),
-            '2Weeks': trade_date + relativedelta(weeks=2),
             '1Month': trade_date + relativedelta(months=1),
             '2Months': trade_date + relativedelta(months=2),
             '3Months': trade_date + relativedelta(months=3),
-            '4Months': trade_date + relativedelta(months=4),
             '6Months': trade_date + relativedelta(months=6),
             '8Months': trade_date + relativedelta(months=8),
             '12Months': trade_date + relativedelta(months=12),

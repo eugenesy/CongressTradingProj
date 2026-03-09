@@ -66,7 +66,7 @@ class TemporalGraphBuilder:
         trades['ticker'] = trades['Ticker']
         
         keep_cols = ['event_date', 'bioguide_id', 'ticker', 'event_type', 'transaction_id', 'Trade_Size_USD', 'Transaction', 'Traded_DT']
-        horizons = ['1W', '2W', '1M', '2M', '3M', '4M', '6M', '8M', '12M', '18M', '24M']        
+        horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
         keep_cols += [f'Excess_Return_{h}' for h in horizons if f'Excess_Return_{h}' in trades.columns]
         all_events.append(trades[keep_cols])
         
@@ -256,8 +256,8 @@ class TemporalGraphBuilder:
             msg_arr[non_trade_mask, 0] = combined.loc[non_trade_mask, 'Trade_Size_USD'].values.astype(np.float32)
             
         # 3. Target Masking (y)
-        horizons = ['1W', '2W', '1M', '2M', '3M', '4M', '6M', '8M', '12M', '18M', '24M']
-        y_arr = np.full((num_events, 11), np.nan, dtype=np.float32)
+        horizons = ['1M', '2M', '3M', '6M', '8M', '12M', '18M', '24M']
+        y_arr = np.full((num_events, 8), np.nan, dtype=np.float32)
         for i, h in enumerate(horizons):
             if f'Excess_Return_{h}' in combined.columns:
                 vals = combined.loc[trade_mask, f'Excess_Return_{h}'].values

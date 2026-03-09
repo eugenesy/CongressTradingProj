@@ -108,17 +108,11 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
     if pol_dim > 0:
         logger.info(f"Detected Dynamic Features: Pol_Dim={pol_dim}, Comp_Dim={comp_dim}")
 
-    horizon_map = {
-        '1W': 0, '2W': 1, '1M': 2, '2M': 3, '3M': 4, '4M': 5, 
-        '6M': 6, '8M': 7, '12M': 8, '18M': 9, '24M': 10
-    }
+    horizon_map = {'1M': 0, '2M': 1, '3M': 2, '6M': 3, '8M': 4, '12M': 5, '18M': 6, '24M': 7}
     if horizon not in horizon_map:
         raise ValueError(f"Unsupported horizon: {horizon}")
     h_idx = horizon_map[horizon]
-    h_days = {
-        '1W': 7, '2W': 14, '1M': 30, '2M': 60, '3M': 90, '4M': 120, 
-        '6M': 180, '8M': 240, '12M': 365, '18M': 545, '24M': 730
-    }[horizon]
+    h_days = {'1M': 30, '2M': 60, '3M': 90, '6M': 180, '8M': 240, '12M': 365, '18M': 545, '24M': 730}[horizon]
     h_seconds = h_days * 86400
 
     results = []
