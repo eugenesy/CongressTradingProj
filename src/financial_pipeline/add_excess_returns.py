@@ -15,20 +15,23 @@ CHECKPOINT_INTERVAL = 100  # Save every 100 rows processed
 
 # Required columns
 COLUMNS_NEEDED = [
-    'SPY_TradeDate', 
-    'SPY_1Month', 'SPY_2Months', 'SPY_3Months', 
+    'SPY_TradeDate', 'SPY_1Week', 'SPY_2Weeks',
+    'SPY_1Month', 'SPY_2Months', 'SPY_3Months', 'SPY_4Months',
     'SPY_6Months', 'SPY_8Months', 'SPY_12Months', 
     'SPY_18Months', 'SPY_24Months',
-    'Close_TradeDate', 
-    'Close_1Month', 'Close_2Months', 'Close_3Months', 
+    'Close_TradeDate', 'Close_1Week', 'Close_2Weeks',
+    'Close_1Month', 'Close_2Months', 'Close_3Months', 'Close_4Months',
     'Close_6Months', 'Close_8Months', 'Close_12Months', 
     'Close_18Months', 'Close_24Months'
 ]
 
 NEW_COLUMNS = [
+    'Stock_Return_1W', 'SPY_Return_1W', 'Excess_Return_1W', 'Beat_SPY_6pct_1W',
+    'Stock_Return_2W', 'SPY_Return_2W', 'Excess_Return_2W', 'Beat_SPY_6pct_2W',
     'Stock_Return_1M', 'SPY_Return_1M', 'Excess_Return_1M', 'Beat_SPY_6pct_1M',
     'Stock_Return_2M', 'SPY_Return_2M', 'Excess_Return_2M', 'Beat_SPY_6pct_2M',
     'Stock_Return_3M', 'SPY_Return_3M', 'Excess_Return_3M', 'Beat_SPY_6pct_3M',
+    'Stock_Return_4M', 'SPY_Return_4M', 'Excess_Return_4M', 'Beat_SPY_6pct_4M',
     'Stock_Return_6M', 'SPY_Return_6M', 'Excess_Return_6M', 'Beat_SPY_6pct_6M',
     'Stock_Return_8M', 'SPY_Return_8M', 'Excess_Return_8M', 'Beat_SPY_6pct_8M',
     'Stock_Return_12M', 'SPY_Return_12M', 'Excess_Return_12M', 'Beat_SPY_6pct_12M',
@@ -41,9 +44,12 @@ def _calculate_returns(row):
     results = {}
 
     period_map = {
+        '1W': '1Week',
+        '2W': '2Weeks',
         '1M': '1Month',
         '2M': '2Months',
         '3M': '3Months',
+        '4M': '4Months',
         '6M': '6Months',
         '8M': '8Months',
         '12M': '12Months',
