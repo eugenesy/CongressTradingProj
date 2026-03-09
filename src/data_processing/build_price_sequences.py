@@ -44,7 +44,7 @@ def compute_features(df, end_date):
     - Volume_Ratio (Vol / Avg_Vol_20d)
     """
     # Get data up to end_date
-    hist = df.loc[:end_date]
+    hist = df[df.index <= end_date]
     
     if len(hist) < 21:  # Need at least 21 days for 20d features
         return None
@@ -91,6 +91,10 @@ def load_spy():
     print(f"Loading SPY data from {SPY_PATH}...")
     spy_df = pd.read_parquet(SPY_PATH)
     spy_df.index = pd.to_datetime(spy_df.index)
+
+    spy_df = spy_df.sort_index()
+    spy_df = spy_df[~spy_df.index.duplicated(keep='last')]
+
     # Ensure required columns
     for col in ['close', 'volume']:
         if col not in spy_df.columns:
@@ -115,6 +119,8 @@ def process_features(df, spy_df):
         try:
             stock_df = pd.read_parquet(stock_path)
             stock_df.index = pd.to_datetime(stock_df.index)
+            stock_df = stock_df.sort_index()
+            stock_df = stock_df[~stock_df.index.duplicated(keep='last')]
             for col in ['close', 'volume']:
                 if col not in stock_df.columns:
                     stock_df[col] = 0.0
