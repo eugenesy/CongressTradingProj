@@ -18,7 +18,7 @@ def download_spy_historical(
     spy_parquet=str(SPY_PARQUET)
 ):
     print("Loading transaction data to determine date range...")
-    df = pd.read_csv(input_csv, parse_dates=['Traded'])
+    df = pd.read_csv(input_csv, parse_dates=['Traded'], low_memory=False) # Added low_memory=False to suppress DTypeWarning
 
     earliest_trade = df['Traded'].min() - timedelta(days=45)
     latest_trade = df['Traded'].max() + relativedelta(months=6)
@@ -30,6 +30,19 @@ def download_spy_historical(
     try:
         print(f"Reading SPY data from local parquet: {spy_parquet}")
         spy_df = pd.read_parquet(spy_parquet)
+
+        # Robust Date Indexing: Find date column and set it as index
+        if 'date' in spy_df.columns:
+            spy_df['date'] = pd.to_datetime(spy_df['date'])
+            spy_df.set_index('date', inplace=True)
+        elif 'Date' in spy_df.columns:
+            spy_df['Date'] = pd.to_datetime(spy_df['Date'])
+            spy_df.set_index('Date', inplace=True)
+        elif spy_df.index.dtype != 'datetime64[ns]':
+            try:
+                spy_df.index = pd.to_datetime(spy_df.index)
+            except Exception:
+                pass
 
         spy_df_filtered = spy_df[
             (spy_df.index >= earliest_trade) &
@@ -48,25 +61,20 @@ def download_spy_historical(
                     'high': row['high'],
                     'low': row['low'],
                     'close': row['close'],
-                    'volume': row['volume'],
-                    'adjClose': row['adjClose'],
-                    'unadjustedVolume': row['unadjustedVolume'],
-                    'change': row['change'],
-                    'changePercent': row['changePercent'],
-                    'vwap': row['vwap'],
-                    'label': row['label'],
-                    'changeOverTime': row['changeOverTime']
+                    'volume': int(row['volume']) if pd.notna(row['volume']) else 0,
+                    'unadjustedVolume': int(row['unadjustedVolume']) if 'unadjustedVolume' in row and pd.notna(row['unadjustedVolume']) else 0,
+                    'adjClose': row.get('adjClose', row['close']),
+                    'change': row.get('change', 0.0),
+                    'changePercent': row.get('changePercent', 0.0),
+                    'vwap': row.get('vwap', 0.0),
+                    'label': row.get('label', ''),
+                    'changeOverTime': row.get('changeOverTime', 0.0)
                 }
 
         print(f"Successfully loaded {len(spy_data)} days of SPY data from local parquet")
 
         save_checkpoint(spy_data, spy_pkl)
         print(f"SPY historical data saved to {spy_pkl}")
-
-        sample_date = list(spy_data.keys())[0]
-        print(f"\nSample entry for {sample_date}:")
-        for key, value in spy_data[sample_date].items():
-            print(f"  {key}: {value}")
 
         return True
 

@@ -32,6 +32,7 @@ def load_data(file_path):
 def load_csv_with_path(file_path, **kwargs):
     """Loads CSV with path resolution."""
     full_path = get_project_root() / file_path
+    kwargs.setdefault('low_memory', False)
     return pd.read_csv(full_path, **kwargs)
 
 

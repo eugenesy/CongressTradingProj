@@ -3,6 +3,7 @@ import pickle
 import os
 from tqdm import tqdm
 from datetime import datetime
+import re
 
 # Import utility functions
 from src.financial_pipeline.utils import load_checkpoint, save_checkpoint, get_data_path
@@ -43,10 +44,12 @@ def _load_ticker_from_parquet(ticker, start_date, end_date):
                 'high': row['high'],
                 'low': row['low'],
                 'close': row['close'],
-                'volume': int(row['volume']),
+                # Handle NaN to int conversion safely
+                'volume': int(row['volume']) if pd.notna(row['volume']) else 0,
                 # NEW columns from parquet
                 'adjClose': row['adjClose'],
-                'unadjustedVolume': int(row['unadjustedVolume']),
+                # Handle NaN to int conversion safely
+                'unadjustedVolume': int(row['unadjustedVolume']) if pd.notna(row['unadjustedVolume']) else 0,
                 'change': row['change'],
                 'changePercent': row['changePercent'],
                 'vwap': row['vwap'],
@@ -99,8 +102,10 @@ def _show_data_preview():
             df = pd.read_parquet(parquet_file)
             df_filtered = df[(df.index >= START_DATE) & (df.index <= END_DATE)]
             df_preview = df_filtered.head(3).reset_index()
-            df_preview = df_preview[['date', 'open', 'high', 'low', 'close', 'volume',
-                                     'adjClose', 'change', 'changePercent', 'vwap']]
+            # Dynamically grab columns that actually exist to avoid KeyError
+            desired_cols = ['index', 'date', 'open', 'high', 'low', 'close', 'volume', 'adjClose', 'change', 'changePercent', 'vwap']
+            cols_to_keep = [c for c in desired_cols if c in df_preview.columns]
+            df_preview = df_preview[cols_to_keep]
 
             print("\nSample data format:")
             print(df_preview)
@@ -133,8 +138,19 @@ def download_all_tickers_historical(
 
     # input("\nPress Enter to start loading all tickers or Ctrl+C to abort...")
 
-    df = pd.read_csv(csv_file)
-    tickers = df['Appropriate_Ticker'].dropna().unique()
+    # Added low_memory=False to silence DtypeWarning
+    df = pd.read_csv(csv_file, low_memory=False)
+    
+    # Extract base symbols (e.g., BRK.B -> BRK)
+    ticker_col = 'Appropriate_Ticker' if 'Appropriate_Ticker' in df.columns else 'Ticker'
+    raw_tickers = df[ticker_col].dropna().unique()
+
+    def sanitize(t):
+        # Remove anything after '.', '-', or '/' and strip whitespace
+        return re.split(r'[.\-/$]', str(t))[0].strip().upper()
+
+    tickers = sorted(list(set([sanitize(t) for t in raw_tickers])))
+
     all_data = load_checkpoint(out_pkl) or {}
     processed = set(all_data.keys())
 

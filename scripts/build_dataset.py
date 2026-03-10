@@ -9,6 +9,7 @@ import subprocess
 
 # Add current script directory to path so we can import from financial_pipeline
 SCRIPT_DIR = Path(__file__).parent
+sys.path.append(str(SCRIPT_DIR.parent))
 
 from src.financial_pipeline.download_tickers import download_all_tickers_historical
 from src.financial_pipeline.download_spy import download_spy_historical
@@ -19,14 +20,12 @@ from src.financial_pipeline.clean_data import clean_transaction_data
 from src.financial_pipeline.add_transaction_ids import add_transaction_ids_and_standardize
 from src.financial_pipeline.create_ml_dataset import create_ml_dataset
 
-
 def get_local_path(folder, filename=None):
     """Helper to get paths within the dataset_package/data directory."""
     base = SCRIPT_DIR.parent / "data" / folder
     if filename:
         return base / filename
     return base
-
 
 def main():
     """Main function to orchestrate the data processing workflow."""
@@ -51,12 +50,16 @@ def main():
     v7_transactions_csv = processed_dir / 'v7_transactions.csv'
     excess_returns_checkpoint_pkl = processed_dir / 'excess_returns_checkpoint.pkl'
     v8_transactions_csv = processed_dir / 'v8_transactions.csv'
-    monthly_label_checkpoint_pkl = processed_dir / 'monthly_label_checkpoint.pkl'
     v8_cleaned_csv = processed_dir / 'v8_transactions_cleaned.csv'
     v8_final_cleaned_csv = processed_dir / 'v8_transactions_final_cleaned.csv'
     v9_transactions_csv = processed_dir / 'v9_transactions.csv'
     ml_dataset_csv = processed_dir / 'ml_dataset_reduced_attributes.csv'
     price_sequences_pt = SCRIPT_DIR.parent / "data" / "price_sequences.pt"
+    
+    # New Phase 1 & 2 Output Paths
+    lobbying_events_csv = processed_dir / 'events_lobbying.csv'
+    campaign_events_csv = processed_dir / 'events_campaign_finance.csv'
+    temporal_data_pt = SCRIPT_DIR.parent / "data" / "temporal_data.pt"
 
     # Step 1: Download all tickers historical data
     if all_tickers_pkl.exists():
@@ -115,7 +118,7 @@ def main():
             checkpoint_file=str(processed_dir / 'excess_returns_checkpoint.pkl')
         )
 
-    # Step 6: Clean data (Relinked from v7 after removing Labeling step)
+    # Step 6: Clean data
     if v8_final_cleaned_csv.exists():
         print(f"Skipping Step 6: {v8_final_cleaned_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
@@ -151,16 +154,44 @@ def main():
         print(f"Skipping Step 9: {price_sequences_pt.relative_to(SCRIPT_DIR.parent)} already exists.")
     else:
         print("Step 9: Building Price Sequences (.pt)...")
-        # Run build_prices.py as a subprocess to keep environments separate if needed
-        # and ensure it uses the local paths
         try:
-            subprocess.run([sys.executable, str(SCRIPT_DIR / "build_prices.py")], check=True)
+            subprocess.run([sys.executable, str(SCRIPT_DIR.parent / "src" / "data_processing" / "build_price_sequences.py")], check=True)
         except subprocess.CalledProcessError as e:
             print(f"❌ Error building price sequences: {e}")
             sys.exit(1)
 
-    print("\n✅ Dataset Package Build completed successfully!")
+    # Step 10: Build Lobbying Influence Events
+    if lobbying_events_csv.exists():
+        print(f"Skipping Step 10: {lobbying_events_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    else:
+        print("Step 10: Extracting Lobbying Influence Pipeline...")
+        try:
+            subprocess.run([sys.executable, str(SCRIPT_DIR.parent / "src" / "data_processing" / "build_lobbying_events.py")], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error building Lobbying events: {e}")
+            sys.exit(1)
 
+    # Step 11: Build Campaign Finance Events
+    if campaign_events_csv.exists():
+        print(f"Skipping Step 11: {campaign_events_csv.relative_to(SCRIPT_DIR.parent)} already exists.")
+    else:
+        print("Step 11: Extracting Campaign Finance Pipeline...")
+        try:
+            subprocess.run([sys.executable, str(SCRIPT_DIR.parent / "src" / "data_processing" / "build_campaign_events.py")], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error building Campaign Finance events: {e}")
+            sys.exit(1)
+
+    # Step 12: Construct Full Temporal Graph Tensor
+    # We do not skip this if it exists, because changes to Phase 1-11 require the graph to be re-compiled.
+    print("Step 12: Compiling Unified Temporal Graph Tensor...")
+    try:
+        subprocess.run([sys.executable, str(SCRIPT_DIR.parent / "src" / "temporal_data.py")], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Error building Temporal Graph Tensor: {e}")
+        sys.exit(1)
+
+    print("\n✅ Dataset Package Build completed successfully!")
 
 if __name__ == "__main__":
     main()
