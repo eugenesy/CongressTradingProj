@@ -63,7 +63,7 @@ LEGISLATORS_CROSSWALK_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
 CATCODE_CROSSWALK_PATH = INDUSTRY_CROSSWALK_DIR / "2013-CAT_to_SIC_to_NAICS_mappings.csv"
 
 # Key Files
-TX_FILENAME = "ml_dataset_clean.csv"
+TX_FILENAME = "ml_dataset_reduced_attributes.csv"
 TX_PATH = PROCESSED_DATA_DIR / TX_FILENAME
 
 PRICE_FILENAME = "all_tickers_historical_data.pkl"

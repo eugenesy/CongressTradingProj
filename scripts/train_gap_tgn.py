@@ -53,7 +53,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
         data = torch.load("data/temporal_data.pt")
     data = data.to(device, non_blocking=True)
 
-    df = pd.read_csv("data/processed/ml_dataset_clean.csv")
+    df = pd.read_csv("data/processed/ml_dataset_reduced_attributes.csv")
     df['Filed'] = pd.to_datetime(df['Filed'])
     df['Traded'] = pd.to_datetime(df['Traded'])
     df = df.sort_values('Filed').reset_index(drop=True)
