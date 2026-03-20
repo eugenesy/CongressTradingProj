@@ -1,0 +1,21 @@
+# PyTools
+__pycache__/
+*.pyc
+*.pyo
+
+# Data and Outputs
+data/
+!data/.gitkeep
+results/
+!results/.gitkeep
+logs/
+*.csv
+*.pt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual Env
+venv/
+env/
+.env

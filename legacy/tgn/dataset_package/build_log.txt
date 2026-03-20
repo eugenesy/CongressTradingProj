@@ -1,0 +1,33 @@
+🚀 Starting Dataset Build Pipeline (Packaged Version)...
+Skipping Step 1: data/processed/all_tickers_historical_data.pkl already exists.
+Skipping Step 2: data/processed/spy_historical_data.pkl already exists.
+Skipping Step 3: data/processed/v5_transactions_with_benchmark.csv already exists.
+Skipping Step 4: data/processed/v6_transactions.csv already exists.
+Skipping Step 5: data/processed/v7_transactions.csv already exists.
+Skipping Step 6: data/processed/v8_transactions_final_cleaned.csv already exists.
+Step 7: Adding Transaction IDs...
+Loading transaction data...
+Standardizing trade sizes...
+Calculating filing gaps...
+  Removed 19 rows with negative Filing_Gap (impossible dates).
+  Filing Gap computed (Median: 27.0 days)
+
+Standardized Trade Size Distribution:
+  1001 - 15000: 25559
+  15001 - 50000: 5366
+  50001 - 100000: 1467
+  100001 - 250000: 1000
+  1 - 1000: 420
+  250001 - 500000: 273
+  500001 - 1000000: 107
+  1000001 - 5000000: 58
+  5000001 - 25000000: 15
+  25000001 - 50000000: 1
+Added 34285 unique IDs and standardized trade sizes
+Output saved to /data1/user_syeugene/fintech/grape/clean_tgn/dataset_package/data/processed/v9_transactions.csv
+Step 8: Creating Final ML Dataset CSV...
+Successfully created '/data1/user_syeugene/fintech/grape/clean_tgn/dataset_package/data/processed/ml_dataset_reduced_attributes.csv' with the following columns:
+['transaction_id', 'BioGuideID', 'Chamber', 'Filed', 'Party', 'State', 'Ticker', 'TickerType', 'Trade_Size_USD', 'Traded', 'Transaction', 'Filing_Gap', 'Excess_Return_1M', 'Excess_Return_2M', 'Excess_Return_3M', 'Excess_Return_6M', 'Excess_Return_8M', 'Excess_Return_12M', 'Excess_Return_18M', 'Excess_Return_24M']
+Skipping Step 9: data/price_sequences.pt already exists.
+
+✅ Dataset Package Build completed successfully!
