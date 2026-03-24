@@ -11,7 +11,7 @@ Design principles:
     was dropped and why.
 
 Usage:
-    from scripts.build_v2.ticker_normalizer import TickerNormalizer
+    from src.data_prep.ticker_normalizer import TickerNormalizer
 
     normalizer = TickerNormalizer(parquet_dir="data/parquet")
     normalizer.fit()                          # scan parquet files once

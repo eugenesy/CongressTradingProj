@@ -6,9 +6,16 @@ Data Preparation Module. Handles raw transformation to ML dataset.
 Refactored/Audited: 2026-03-20
 """
 
-import pandas as pd
-from run_path_dependent_ml import vectorize_continuous_labels
+import sys
 from pathlib import Path
+
+# Add repo root to sys.path
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+import pandas as pd
+from scripts.run_path_dependent_ml import vectorize_continuous_labels
 
 def main():
     print("⏳ Vectorizing continuous labels once for caching...")

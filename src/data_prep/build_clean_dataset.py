@@ -46,8 +46,8 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from scripts.build_v2.ticker_normalizer import TickerNormalizer
-from scripts.build_v2.price_utils import (
+from src.data_prep.ticker_normalizer import TickerNormalizer
+from src.data_prep.price_utils import (
     compute_excess_returns,
     compute_price_features,
     clear_cache,
@@ -274,7 +274,7 @@ def compute_returns_vectorised(df: pd.DataFrame, parquet_dir: str) -> pd.DataFra
     by loading each ticker's parquet once and doing all date lookups at once.
     """
     import warnings
-    from scripts.build_v2.price_utils import load_parquet, HORIZONS
+    from src.data_prep.price_utils import load_parquet, HORIZONS
 
     spy_df = load_parquet("SPY", parquet_dir)
     if spy_df is None:
@@ -358,7 +358,7 @@ def compute_features_vectorised(df: pd.DataFrame, parquet_dir: str) -> dict:
     Compute backward technical features per transaction.
     Returns {transaction_id: np.ndarray(14,)}.
     """
-    from scripts.build_v2.price_utils import (
+    from src.data_prep.price_utils import (
         load_parquet, _compute_features_for_ticker
     )
 
