@@ -1,0 +1,4 @@
+[console_scripts]
+chocolate-baselines = scripts.train_baselines:main
+chocolate-build = scripts.build_dataset:main
+chocolate-train = scripts.train_gap_tgn:main
