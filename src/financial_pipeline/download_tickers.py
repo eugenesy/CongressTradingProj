@@ -14,7 +14,7 @@ OUT_PKL = get_data_path('processed', 'all_tickers_historical_data.pkl')
 FAILED_REPORT = get_data_path('processed', 'failed_tickers_report.txt')
 PARQUET_DIR = get_data_path('parquet')
 START_DATE = datetime(2012, 7, 30)
-END_DATE = datetime(2025, 10, 4)
+END_DATE = datetime.today()
 CHECKPOINT_INTERVAL = 1000
 SAMPLE_TICKER = 'AAPL'  # Example ticker for preview
 
@@ -142,7 +142,7 @@ def download_all_tickers_historical(
     df = pd.read_csv(csv_file, low_memory=False)
     
     # Extract base symbols (e.g., BRK.B -> BRK)
-    ticker_col = 'Appropriate_Ticker' if 'Appropriate_Ticker' in df.columns else 'Ticker'
+    ticker_col = 'Ticker'
     raw_tickers = df[ticker_col].dropna().unique()
 
     def sanitize(t):

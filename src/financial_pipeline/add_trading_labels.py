@@ -40,7 +40,13 @@ def add_trading_labels(
     checkpoint_interval=CHECKPOINT_INTERVAL
 ):
     print("Loading dataset...")
-    df = load_csv_with_path(input_csv, low_memory=False)
+    # Load output_csv if resuming, otherwise load input_csv
+    if os.path.exists(output_csv) and os.path.exists(checkpoint_file):
+        df = load_csv_with_path(output_csv, low_memory=False)
+        print(f"Resuming from {output_csv}")
+    else:
+        df = load_csv_with_path(input_csv, low_memory=False)
+        print(f"Starting fresh from {input_csv}")
 
     for period in ['1M', '3M', '6M']:
         col_name = f'Label_{period}'

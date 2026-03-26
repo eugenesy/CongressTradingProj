@@ -15,7 +15,7 @@ HIST_PKL = '../data/all_tickers_historical_data.pkl'
 OUTPUT_CSV = '../data/v6_transactions.csv'
 CHECKPOINT_FILE = '../data/closing_price_addition_checkpoint.pkl'
 CHECKPOINT_INTERVAL = 10000
-CURRENT_DATE = datetime(2025, 5, 21)
+CURRENT_DATE = datetime.today()
 
 def _get_close(ticker, target_date, hist_data):
     if pd.isna(ticker) or ticker not in hist_data or not hist_data[ticker]:

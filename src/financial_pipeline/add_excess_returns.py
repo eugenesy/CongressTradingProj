@@ -11,7 +11,7 @@ from src.financial_pipeline.utils import load_checkpoint, save_checkpoint, load_
 INPUT_CSV = '../data/v6_transactions.csv'
 OUTPUT_CSV = '../data/v7_transactions.csv'
 CHECKPOINT_FILE = '../data/excess_returns_checkpoint.pkl'
-CHECKPOINT_INTERVAL = 100  # Save every 100 rows processed
+CHECKPOINT_INTERVAL = 10000  # Save every 10000 rows processed
 
 # Required columns
 COLUMNS_NEEDED = [
@@ -84,9 +84,15 @@ def add_excess_returns(
 ):
     print("Loading data...")
     try:
-        df = load_csv_with_path(input_csv)
+        # Load output_csv if resuming, otherwise load input_csv
+        if os.path.exists(output_csv) and os.path.exists(checkpoint_file):
+            df = load_csv_with_path(output_csv)
+            print(f"Resuming from {output_csv}")
+        else:
+            df = load_csv_with_path(input_csv)
+            print(f"Starting fresh from {input_csv}")
     except FileNotFoundError:
-        raise SystemExit("Error: Input file not found. Check the INPUT_CSV path.")
+        raise SystemExit("Error: Input file not found. Check the paths.")
 
     missing = set(COLUMNS_NEEDED) - set(df.columns)
     if missing:

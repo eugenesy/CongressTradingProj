@@ -1,25 +1,40 @@
 #!/bin/bash
+# run_short_horizons.sh
 
-# Extract the start year dynamically from the processed dataset
-START_YEAR=$(python -c "import pandas as pd; print(pd.to_datetime(pd.read_csv('data/processed/ml_dataset_clean.csv')['Filed']).dt.year.min())")
-END_YEAR=2025
-
-# Define the horizons to run
+# Target short-term horizons
 HORIZONS=("1W" "2W" "1M" "2M" "3M" "4M")
+START_YEAR=2014
+END_YEAR=2025
+ALPHA=0.0
+EPOCHS=5
+SEED=42
 
-# Ensure the script stops if any command fails
-set -e
+# Directory for outputs
+OUT_DIR="results/experiments_short_horizons"
+mkdir -p "$OUT_DIR"
 
-for HORIZON in "${HORIZONS[@]}"; do
-    echo "====================================================="
-    echo "Starting training for horizon: $HORIZON ($START_YEAR to $END_YEAR)"
-    echo "====================================================="
+echo "Starting GAP-TGN Training for Short Horizons ($START_YEAR-$END_YEAR)"
+
+for H in "${HORIZONS[@]}"; do
+    echo "=================================================="
+    echo "Launching GAP-TGN ($H)..."
     
+    # Run sequentially to avoid overloading the server's memory
     python scripts/train_gap_tgn.py \
-        --horizon "$HORIZON" \
-        --start-year "$START_YEAR" \
-        --end-year "$END_YEAR" \
-        --out-dir "results/experiments/horizon_${HORIZON}"
+        --horizon $H \
+        --alpha $ALPHA \
+        --epochs $EPOCHS \
+        --start-year $START_YEAR \
+        --end-year $END_YEAR \
+        --seed $SEED \
+        --out-dir $OUT_DIR > "$OUT_DIR/log_tgn_${H}.txt" 2>&1
+        
+    if [ $? -eq 0 ]; then
+        echo "✅ GAP-TGN ($H) Completed."
+    else
+        echo "❌ GAP-TGN ($H) FAILED. Check $OUT_DIR/log_tgn_${H}.txt"
+    fi
 done
 
-echo "All horizons completed successfully."
+echo "=================================================="
+echo "All short horizons completed."

@@ -53,7 +53,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
         data = torch.load("data/temporal_data.pt")
     data = data.to(device, non_blocking=True)
 
-    df = pd.read_csv("data/processed/ml_dataset_reduced_attributes.csv")
+    df = pd.read_csv("data/processed/ml_dataset_clean.csv")
     df['Filed'] = pd.to_datetime(df['Filed'])
     df['Traded'] = pd.to_datetime(df['Traded'])
     df = df.sort_values('Filed').reset_index(drop=True)
@@ -242,9 +242,11 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                 neighbor_loader.reset_state()
                 model.memory.detach()
                 epoch_loss = []
-                inserted_global_e_ids = [torch.empty(0, dtype=torch.long, device=device)]
+                total_epoch_edges = len(train_data.src) + len(gap_data.src) + len(test_data.src)
+                mapped_e_ids_array = torch.empty(total_epoch_edges, dtype=torch.long, device=device)
+                insertion_count = 0
 
-                for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} Training", leave=False):
+                for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{epochs} Training", leave=False, mininterval=60.0):
                     batch = batch.to(device, non_blocking=True)
                     optimizer.zero_grad()
 
@@ -265,15 +267,14 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
                     
-                    if e_id.numel() > 0 and inserted_global_e_ids:
-                        all_e_ids = torch.cat(inserted_global_e_ids)
-                        valid_eid_mask = (e_id >= 0) & (e_id < all_e_ids.numel())
+                    if e_id.numel() > 0 and insertion_count > 0:
+                        valid_eid_mask = (e_id >= 0) & (e_id < insertion_count)
                         safe_e_id = e_id.clone()
                         safe_e_id[~valid_eid_mask] = 0
-                        mapped_e_id = all_e_ids[safe_e_id]
+                        mapped_e_id = mapped_e_ids_array[safe_e_id]
                     else:
                         mapped_e_id = torch.zeros(e_id.numel(), dtype=torch.long, device=device) if e_id.numel() > 0 else torch.empty(0, dtype=torch.long, device=device)
-
+                    
                     hist_y = data.y[mapped_e_id, h_idx]
                     hist_targets, hist_label_mask = direction_targets(hist_y, alpha)
                     hist_resolved = (data.trade_t[mapped_e_id] + h_seconds) < batch_max_t
@@ -314,14 +315,21 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     if valid_mask.sum() > 0:
                         model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
                         neighbor_loader.insert(src[valid_mask], dst[valid_mask])
-                        inserted_global_e_ids.append(batch.global_e_id[valid_mask])
+                        num_valid = valid_mask.sum()
+                        if num_valid > 0:
+                            model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                            neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                            
+                            # In-place assignment avoids memory reallocation
+                            mapped_e_ids_array[insertion_count : insertion_count + num_valid] = batch.global_e_id[valid_mask]
+                            insertion_count += num_valid
                     
                     model.memory.detach()
 
                 if len(gap_data.src) > 0:
                     model.eval()
                     with torch.no_grad():
-                        for batch in tqdm(gap_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
+                        for batch in tqdm(gap_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False, mininterval=60.0):
                             batch = batch.to(device, non_blocking=True)
                             src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                             p_context = model.get_price_embedding(batch.price_seq)
@@ -331,7 +339,14 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                             if valid_mask.sum() > 0:
                                 model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
                                 neighbor_loader.insert(src[valid_mask], dst[valid_mask])
-                                inserted_global_e_ids.append(batch.global_e_id[valid_mask])
+                                num_valid = valid_mask.sum()
+                                if num_valid > 0:
+                                    model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                                    neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                                    
+                                    # In-place assignment avoids memory reallocation
+                                    mapped_e_ids_array[insertion_count : insertion_count + num_valid] = batch.global_e_id[valid_mask]
+                                    insertion_count += num_valid
 
                 logger.info("    Epoch %s/%s | Loss: %.4f", epoch, epochs, float(np.mean(epoch_loss)) if epoch_loss else 0.0)
 
@@ -340,7 +355,7 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
             all_preds, all_targets = [], []
 
             with torch.no_grad():
-                for batch in tqdm(test_loader, desc=f"Epoch {epoch}/{epochs} Gap Forward", leave=False):
+                for batch in tqdm(test_loader, desc=f"Epoch {epoch}/{epochs} Test", leave=False, mininterval=60.0):
                     batch = batch.to(device, non_blocking=True)
                     src, dst, t, msg = batch.src, batch.dst, batch.t, batch.msg
                     raw_y = batch.y[:, h_idx]
@@ -359,12 +374,11 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     n_id, edge_index, e_id = neighbor_loader(n_id)
                     assoc = {node.item(): i for i, node in enumerate(n_id)}
                     
-                    if e_id.numel() > 0 and inserted_global_e_ids:
-                        all_e_ids = torch.cat(inserted_global_e_ids)
-                        valid_eid_mask = (e_id >= 0) & (e_id < all_e_ids.numel())
+                    if e_id.numel() > 0 and insertion_count > 0:
+                        valid_eid_mask = (e_id >= 0) & (e_id < insertion_count)
                         safe_e_id = e_id.clone()
                         safe_e_id[~valid_eid_mask] = 0
-                        mapped_e_id = all_e_ids[safe_e_id]
+                        mapped_e_id = mapped_e_ids_array[safe_e_id]
                     else:
                         mapped_e_id = torch.zeros(e_id.numel(), dtype=torch.long, device=device) if e_id.numel() > 0 else torch.empty(0, dtype=torch.long, device=device)
 
@@ -417,7 +431,14 @@ def run_tgn_study(horizon='6M', alpha=0.0, epochs=5, start_year=2023, end_year=2
                     if valid_mask.sum() > 0:
                         model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
                         neighbor_loader.insert(src[valid_mask], dst[valid_mask])
-                        inserted_global_e_ids.append(batch.global_e_id[valid_mask])
+                        num_valid = valid_mask.sum()
+                        if num_valid > 0:
+                            model.memory.update_state(src[valid_mask], dst[valid_mask], t[valid_mask], aug_msg[valid_mask])
+                            neighbor_loader.insert(src[valid_mask], dst[valid_mask])
+                            
+                            # In-place assignment avoids memory reallocation
+                            mapped_e_ids_array[insertion_count : insertion_count + num_valid] = batch.global_e_id[valid_mask]
+                            insertion_count += num_valid
 
             if len(all_targets) == 0:
                 logger.warning("No labeled targets for %s, skipping.", test_start.strftime('%Y-%m'))

@@ -12,7 +12,7 @@ from src.financial_pipeline.utils import load_checkpoint, load_csv_with_path, sa
 INPUT_CSV = '../data/v5_transactions_with_approp_ticker.csv'
 OUTPUT_CSV = '../data/v5_transactions_with_benchmark.csv'
 SPY_PKL = '../data/spy_historical_data.pkl'
-CURRENT_DATE = datetime(2025, 5, 20)
+CURRENT_DATE = datetime.today()
 
 def _get_spy_price(target_date, spy_data):
     if target_date > CURRENT_DATE:
