@@ -23,9 +23,10 @@ INCLUDE_PERFORMANCE = True # NEW: Toggles the 3-dim trading performance stats
 INCLUDE_POLITICIAN_BIO = True 
 INCLUDE_IDEOLOGY = True
 INCLUDE_COMMITTEES = True
-INCLUDE_COMPANY_SIC = True
+INCLUDE_COMPANY_SIC = False
 INCLUDE_DISTRICT_ECON = False
 INCLUDE_COMPANY_FINANCIALS = False
+
 
 # --- Specific Data Paths ---
 IDEOLOGY_PATH = RAW_DATA_DIR / "ideology_scores_quarterly.csv"
