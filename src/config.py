@@ -26,6 +26,10 @@ INCLUDE_COMMITTEES = True
 INCLUDE_COMPANY_SIC = False
 INCLUDE_DISTRICT_ECON = False
 INCLUDE_COMPANY_FINANCIALS = False
+INCLUDE_LOBBYING_SPONSORSHIP = True
+INCLUDE_LOBBYING_VOTING = True
+INCLUDE_CAMPAIGN_FINANCE = True
+
 
 
 # --- Specific Data Paths ---
@@ -38,6 +42,10 @@ CONGRESS_TERMS_PATH = RAW_DATA_DIR / "congress_terms_all_github.csv"
 
 # Make sure local directories exist
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# --- Auxiliary Event Paths ---
+LOBBYING_EVENTS_PATH = str(PROCESSED_DATA_DIR / "events_lobbying.csv")
+CAMPAIGN_FINANCE_EVENTS_PATH = str(PROCESSED_DATA_DIR / "events_campaign_finance.csv")
 
 # Convert to strings for backward compatibility
 PROJECT_ROOT = str(PROJECT_ROOT)
